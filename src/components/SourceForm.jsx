@@ -9,6 +9,16 @@ import { PlusOutlined, EditOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
+const DATA_END_CONDITION_OPERATORS = [
+  { value: 'eq', label: 'Bằng (=)' },
+  { value: 'ne', label: 'Khác (!=)' },
+  { value: 'contains', label: 'Chứa' },
+  { value: 'empty', label: 'Rỗng' },
+  { value: 'not_empty', label: 'Không rỗng' },
+];
+
+const DATA_END_VALUE_REQUIRED_OPERATORS = new Set(['eq', 'ne', 'contains']);
+
 function normalizeSlug(value) {
   return String(value || '')
     .trim()
@@ -20,20 +30,78 @@ function normalizeSlug(value) {
     .replace(/_+/g, '_');
 }
 
-function buildSourceCode(agencyName, projectName) {
-  const agency = normalizeSlug(agencyName);
-  const project = normalizeSlug(projectName);
-  return [agency, project].filter(Boolean).join('_');
+function buildSourceCodeFromName(sourceName) {
+  return normalizeSlug(sourceName || '');
 }
 
-function buildSourceName(agencyName, projectName) {
-  const agency = String(agencyName || '').trim().toUpperCase();
-  const project = String(projectName || '').trim();
-  return [agency, project].filter(Boolean).join(' ');
+function buildSourceNameFromAgency(agencyName) {
+  return String(agencyName || '').trim().toUpperCase();
+}
+
+function parseDataEndConditionDefaults(dataEndCondition) {
+  const hasColumnIndex =
+    dataEndCondition?.column_index !== undefined &&
+    dataEndCondition?.column_index !== null &&
+    String(dataEndCondition.column_index).trim() !== '';
+
+  const parsedColumnIndex = hasColumnIndex ? Number(dataEndCondition.column_index) : '';
+
+  return {
+    data_end_condition_field_type: hasColumnIndex ? 'column_index' : 'column_name',
+    data_end_condition_column_name: String(dataEndCondition?.column_name || ''),
+    data_end_condition_column_index:
+      hasColumnIndex && Number.isFinite(parsedColumnIndex) ? parsedColumnIndex : '',
+    data_end_condition_operator: String(dataEndCondition?.operator || ''),
+    data_end_condition_value: String(dataEndCondition?.value ?? ''),
+  };
+}
+
+function buildDataEndConditionPayload(values, { disabled = false } = {}) {
+  if (disabled) return undefined;
+
+  const fieldType = String(values.data_end_condition_field_type || '').trim();
+  const operator = String(values.data_end_condition_operator || '').trim();
+  const columnName = String(values.data_end_condition_column_name || '').trim();
+  const rawColumnIndex = values.data_end_condition_column_index;
+  const hasColumnIndex =
+    rawColumnIndex !== undefined &&
+    rawColumnIndex !== null &&
+    String(rawColumnIndex).trim() !== '';
+  const columnIndex = hasColumnIndex ? Number(rawColumnIndex) : null;
+  const conditionValue = String(values.data_end_condition_value ?? '').trim();
+
+  if (!operator) return undefined;
+  if (fieldType === 'column_index') {
+    if (!hasColumnIndex || !Number.isInteger(columnIndex) || columnIndex < 0) {
+      return undefined;
+    }
+  } else if (!columnName) {
+    return undefined;
+  }
+
+  if (DATA_END_VALUE_REQUIRED_OPERATORS.has(operator) && !conditionValue) {
+    return undefined;
+  }
+
+  const payload = {
+    operator,
+  };
+
+  if (fieldType === 'column_index') {
+    payload.column_index = columnIndex;
+  } else {
+    payload.column_name = columnName;
+  }
+
+  if (conditionValue) {
+    payload.value = conditionValue;
+  }
+
+  return payload;
 }
 
 const sourceSchema = z.object({
-  source_code: z.string().min(1, 'Bắt buộc'),
+  source_code: z.string().optional(),
   source_name: z.string().min(1, 'Bắt buộc'),
   project_id: z.union([z.string(), z.number()]).optional(),
   agency_id: z.union([z.string(), z.number()]).optional(),
@@ -46,19 +114,14 @@ const sourceSchema = z.object({
   header_row_index: z.union([z.string(), z.number()]).optional(),
   data_start_row_index: z.union([z.string(), z.number()]).optional(),
   data_end_row_index: z.union([z.string(), z.number()]).optional(),
+  data_end_condition_field_type: z.enum(['column_name', 'column_index']).optional(),
+  data_end_condition_column_name: z.string().optional(),
+  data_end_condition_column_index: z.union([z.string(), z.number()]).optional(),
+  data_end_condition_operator: z.enum(['eq', 'ne', 'contains', 'empty', 'not_empty']).optional(),
+  data_end_condition_value: z.string().optional(),
 }).superRefine((data, ctx) => {
-  const hasProjectId = Number(data.project_id) > 0;
   const hasAgencyId = Number(data.agency_id) > 0;
-  const hasProjectText = !!data.du_an?.trim();
   const hasAgencyText = !!data.dai_ly?.trim();
-
-  if (!hasProjectId && !hasProjectText) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Cần chọn Dự án hoặc nhập du_an',
-      path: ['project_id'],
-    });
-  }
 
   if (!hasAgencyId && !hasAgencyText) {
     ctx.addIssue({
@@ -67,9 +130,73 @@ const sourceSchema = z.object({
       path: ['agency_id'],
     });
   }
+
+  const hasDataEndConditionInput = [
+    data.data_end_condition_operator,
+    data.data_end_condition_column_name,
+    data.data_end_condition_column_index,
+    data.data_end_condition_value,
+  ].some((item) => String(item ?? '').trim() !== '');
+
+  if (!hasDataEndConditionInput) return;
+
+  const fieldType = String(data.data_end_condition_field_type || '').trim();
+  if (!fieldType) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Cần chọn column_name hoặc column_index',
+      path: ['data_end_condition_field_type'],
+    });
+  }
+
+  if (fieldType === 'column_index') {
+    const rawColumnIndex = data.data_end_condition_column_index;
+    const hasColumnIndex =
+      rawColumnIndex !== undefined &&
+      rawColumnIndex !== null &&
+      String(rawColumnIndex).trim() !== '';
+    const columnIndex = hasColumnIndex ? Number(rawColumnIndex) : NaN;
+
+    if (!hasColumnIndex || !Number.isInteger(columnIndex) || columnIndex < 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'column_index phải là số nguyên >= 0',
+        path: ['data_end_condition_column_index'],
+      });
+    }
+  } else {
+    const columnName = String(data.data_end_condition_column_name || '').trim();
+    if (!columnName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cần nhập column_name',
+        path: ['data_end_condition_column_name'],
+      });
+    }
+  }
+
+  const operator = String(data.data_end_condition_operator || '').trim();
+  if (!operator) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Cần chọn operator',
+      path: ['data_end_condition_operator'],
+    });
+  }
+
+  const conditionValue = String(data.data_end_condition_value ?? '').trim();
+  if (DATA_END_VALUE_REQUIRED_OPERATORS.has(operator) && !conditionValue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Operator này yêu cầu nhập value',
+      path: ['data_end_condition_value'],
+    });
+  }
 });
 
 function buildDefaults(mode, initialValues) {
+  const dataEndConditionDefaults = parseDataEndConditionDefaults(initialValues?.data_end_condition);
+
   if (mode === 'edit' && initialValues) {
     return {
       source_code: initialValues.source_code || '',
@@ -85,15 +212,19 @@ function buildDefaults(mode, initialValues) {
       header_row_index: initialValues.header_row_index ?? 0,
       data_start_row_index: initialValues.data_start_row_index ?? '',
       data_end_row_index: initialValues.data_end_row_index ?? '',
+      ...dataEndConditionDefaults,
     };
   }
   return {
     source_code: '',
     source_name: '',
-    project_id: '',
     agency_id: '',
-    du_an: '',
     dai_ly: '',
+    data_end_condition_field_type: 'column_name',
+    data_end_condition_column_name: '',
+    data_end_condition_column_index: '',
+    data_end_condition_operator: '',
+    data_end_condition_value: '',
   };
 }
 
@@ -104,6 +235,7 @@ export default function SourceForm({
   headerRowIndex,
   dataStartRowIndex,
   dataEndRowIndex,
+  headers = [],
   mode = 'create',
   initialValues = null,
   onCancel,
@@ -121,9 +253,9 @@ export default function SourceForm({
     register,
     handleSubmit,
     setValue,
-    getValues,
     control,
     reset,
+    watch,
     formState: { errors },
   } = useForm({
     resolver: zodResolver(sourceSchema),
@@ -137,66 +269,78 @@ export default function SourceForm({
   }, [mode, initialValues, reset]);
 
   const isEditMode = mode === 'edit';
-  const hasNoProjects = !loadingProjects && allProjects.length === 0;
   const hasNoAgencies = !loadingAgencies && agencies.length === 0;
+  const dataEndConditionFieldType = watch('data_end_condition_field_type') || 'column_name';
+  const dataEndConditionOperator = watch('data_end_condition_operator') || '';
+  const dataEndRowIndexInForm = watch('data_end_row_index');
+  const isDataEndConditionDisabled = isEditMode
+    ? String(dataEndRowIndexInForm ?? '').trim() !== ''
+    : String(dataEndRowIndex ?? '').trim() !== '';
+  const isDataEndValueRequired = DATA_END_VALUE_REQUIRED_OPERATORS.has(dataEndConditionOperator);
 
-  function tryAutoFill({
-    nextProjectId,
-    nextAgencyId,
-    nextFallbackProject,
-    nextFallbackAgency,
-  } = {}) {
-    const projectId = nextProjectId ?? getValues('project_id');
-    const agencyId = nextAgencyId ?? getValues('agency_id');
-    const fallbackProject = nextFallbackProject ?? getValues('du_an');
-    const fallbackAgency = nextFallbackAgency ?? getValues('dai_ly');
+  function tryAutoFillFromAgency(agencyName) {
+    if (isEditMode) return;
 
-    const projectOption = allProjects.find((item) => String(item.id) === String(projectId));
-    const agencyOption = agencies.find((item) => String(item.id) === String(agencyId));
+    const nextName = buildSourceNameFromAgency(agencyName);
+    if (!nextName) return;
 
-    const projectName = projectOption?.name || fallbackProject || '';
-    const agencyName = agencyOption?.name || fallbackAgency || '';
+    setValue('source_name', nextName, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
 
-    if (!projectName || !agencyName) return;
-
-    const nextCode = buildSourceCode(agencyName, projectName);
-    const nextName = buildSourceName(agencyName, projectName);
-
-    setValue('source_code', nextCode, { shouldDirty: true, shouldValidate: true });
-    setValue('source_name', nextName, { shouldDirty: true, shouldValidate: true });
+    setValue('source_code', buildSourceCodeFromName(nextName), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
   }
-
-  const fallbackProjectRegister = register('du_an', {
-    onChange: (event) => {
-      tryAutoFill({ nextFallbackProject: event?.target?.value || '' });
-    },
-  });
 
   const fallbackAgencyRegister = register('dai_ly', {
     onChange: (event) => {
-      tryAutoFill({ nextFallbackAgency: event?.target?.value || '' });
+      tryAutoFillFromAgency(event?.target?.value || '');
     },
   });
 
   const submitDisabled = disabled || (!isEditMode && (!spreadsheetId || !selectedSheetName));
 
+  useEffect(() => {
+    if (!isDataEndConditionDisabled) return;
+
+    setValue('data_end_condition_field_type', 'column_name');
+    setValue('data_end_condition_column_name', '');
+    setValue('data_end_condition_column_index', '');
+    setValue('data_end_condition_operator', '');
+    setValue('data_end_condition_value', '');
+  }, [isDataEndConditionDisabled, setValue]);
+
+  const handleFormSubmit = handleSubmit((values) => {
+    const dataEndCondition = buildDataEndConditionPayload(values, {
+      disabled: isDataEndConditionDisabled,
+    });
+
+    onSubmit({
+      ...values,
+      data_end_condition: dataEndCondition,
+    });
+  });
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Form layout="vertical" component={false}>
         <Card title="3) Create Source">
           <Text type="secondary">
             {isEditMode ? 'Cập nhật thông tin source.' : 'Tạo source metadata cho backend.'}
           </Text>
 
-          {hasNoProjects || hasNoAgencies ? (
+          {hasNoAgencies ? (
             <Alert
               type="warning"
               style={{ marginTop: 12 }}
               message={(
                 <>
-                  Chưa đủ danh mục để tạo source bằng ID.{' '}
+                  Chưa đủ danh mục để tạo source bằng ID đại lý.{' '}
                   <Button type="link" size="small" style={{ padding: 0 }} onClick={onGoToCatalog}>
-                    Tạo dự án / đại lý
+                    Tạo đại lý
                   </Button>
                 </>
               )}
@@ -205,26 +349,7 @@ export default function SourceForm({
 
           <div style={{ marginTop: 16, pointerEvents: disabled ? 'none' : 'auto', opacity: disabled ? 0.7 : 1 }}>
             <Row gutter={16}>
-              <Col xs={24} sm={12}>
-                <Form.Item
-                  label="source_code *"
-                  validateStatus={errors.source_code ? 'error' : ''}
-                  help={errors.source_code?.message}
-                >
-                  <Controller
-                    name="source_code"
-                    control={control}
-                    render={({ field }) => (
-                      <Input
-                        {...field}
-                        value={field.value || ''}
-                        onChange={(event) => field.onChange(event.target.value)}
-                      />
-                    )}
-                  />
-                </Form.Item>
-              </Col>
-              <Col xs={24} sm={12}>
+              <Col xs={24} sm={24}>
                 <Form.Item
                   label="source_name *"
                   validateStatus={errors.source_name ? 'error' : ''}
@@ -237,41 +362,23 @@ export default function SourceForm({
                       <Input
                         {...field}
                         value={field.value || ''}
-                        onChange={(event) => field.onChange(event.target.value)}
+                        onChange={(event) => {
+                          const nextName = event.target.value;
+                          field.onChange(nextName);
+
+                          if (!isEditMode) {
+                            setValue('source_code', buildSourceCodeFromName(nextName), {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            });
+                          }
+                        }}
                       />
                     )}
                   />
                 </Form.Item>
               </Col>
 
-              <Col xs={24} sm={12}>
-                <Form.Item
-                  label="Dự án *"
-                  validateStatus={errors.project_id ? 'error' : ''}
-                  help={errors.project_id?.message}
-                >
-                  <Controller
-                    name="project_id"
-                    control={control}
-                    render={({ field }) => (
-                      <Select
-                        {...field}
-                        value={field.value || undefined}
-                        onChange={(val) => {
-                          field.onChange(val ?? '');
-                          tryAutoFill({ nextProjectId: val ?? '' });
-                        }}
-                        loading={loadingProjects}
-                        disabled={loadingProjects || disabled}
-                        allowClear
-                        placeholder="-- Chọn dự án --"
-                        style={{ width: '100%' }}
-                        options={allProjects.map((p) => ({ value: p.id, label: p.name }))}
-                      />
-                    )}
-                  />
-                </Form.Item>
-              </Col>
               <Col xs={24} sm={12}>
                 <Form.Item
                   label="Đại lý *"
@@ -287,11 +394,17 @@ export default function SourceForm({
                         value={field.value || undefined}
                         onChange={(val) => {
                           field.onChange(val ?? '');
-                          tryAutoFill({ nextAgencyId: val ?? '' });
+
+                          const agencyOption = agencies.find(
+                            (item) => String(item.id) === String(val)
+                          );
+                          tryAutoFillFromAgency(agencyOption?.name || '');
                         }}
                         loading={loadingAgencies}
                         disabled={loadingAgencies || disabled}
                         allowClear
+                        showSearch
+                        optionFilterProp="label"
                         placeholder="-- Chọn đại lý --"
                         style={{ width: '100%' }}
                         options={agencies.map((a) => ({ value: a.id, label: a.name }))}
@@ -302,14 +415,163 @@ export default function SourceForm({
               </Col>
 
               <Col xs={24} sm={12}>
-                <Form.Item label="Fallback du_an">
-                  <Input {...fallbackProjectRegister} placeholder="Nhập khi chưa có project_id" />
-                </Form.Item>
-              </Col>
-              <Col xs={24} sm={12}>
                 <Form.Item label="Fallback dai_ly">
                   <Input {...fallbackAgencyRegister} placeholder="Nhập khi chưa có agency_id" />
                 </Form.Item>
+              </Col>
+
+              <Col xs={24}>
+                <Card
+                  size="small"
+                  title="Điều kiện kết thúc (tuỳ chọn)"
+                  extra={isDataEndConditionDisabled ? <Text type="secondary">Đang bị vô hiệu</Text> : null}
+                >
+                  {isDataEndConditionDisabled ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message="Đang dùng data_end_row_index nên data_end_condition được tắt."
+                    />
+                  ) : null}
+
+                  <Row gutter={12}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item
+                        label="Kiểu cột"
+                        validateStatus={errors.data_end_condition_field_type ? 'error' : ''}
+                        help={errors.data_end_condition_field_type?.message}
+                      >
+                        <Controller
+                          name="data_end_condition_field_type"
+                          control={control}
+                          render={({ field }) => (
+                            <Select
+                              {...field}
+                              value={field.value || 'column_name'}
+                              disabled={disabled || isDataEndConditionDisabled}
+                              options={[
+                                { value: 'column_name', label: 'column_name' },
+                                { value: 'column_index', label: 'column_index (0-based)' },
+                              ]}
+                              onChange={(value) => {
+                                field.onChange(value);
+                                setValue('data_end_condition_column_name', '');
+                                setValue('data_end_condition_column_index', '');
+                              }}
+                            />
+                          )}
+                        />
+                      </Form.Item>
+                    </Col>
+
+                    <Col xs={24} sm={8}>
+                      {dataEndConditionFieldType === 'column_index' ? (
+                        <Form.Item
+                          label="column_index (0-based)"
+                          validateStatus={errors.data_end_condition_column_index ? 'error' : ''}
+                          help={errors.data_end_condition_column_index?.message}
+                        >
+                          <Controller
+                            name="data_end_condition_column_index"
+                            control={control}
+                            render={({ field }) => (
+                              <InputNumber
+                                {...field}
+                                value={field.value === '' ? null : field.value}
+                                onChange={(value) => field.onChange(value ?? '')}
+                                min={0}
+                                precision={0}
+                                style={{ width: '100%' }}
+                                disabled={disabled || isDataEndConditionDisabled}
+                              />
+                            )}
+                          />
+                        </Form.Item>
+                      ) : (
+                        <Form.Item
+                          label="column_name"
+                          validateStatus={errors.data_end_condition_column_name ? 'error' : ''}
+                          help={errors.data_end_condition_column_name?.message}
+                        >
+                          <Controller
+                            name="data_end_condition_column_name"
+                            control={control}
+                            render={({ field }) => (
+                              <Select
+                                value={field.value || undefined}
+                                onChange={(value) => field.onChange(value ?? '')}
+                                placeholder="Chọn header"
+                                disabled={disabled || isDataEndConditionDisabled}
+                                allowClear
+                                showSearch
+                                optionFilterProp="label"
+                                options={headers.map((header) => ({
+                                  value: String(header),
+                                  label: String(header),
+                                }))}
+                              />
+                            )}
+                          />
+                        </Form.Item>
+                      )}
+                    </Col>
+
+                    <Col xs={24} sm={8}>
+                      <Form.Item
+                        label="Toán tử"
+                        validateStatus={errors.data_end_condition_operator ? 'error' : ''}
+                        help={errors.data_end_condition_operator?.message}
+                      >
+                        <Controller
+                          name="data_end_condition_operator"
+                          control={control}
+                          render={({ field }) => (
+                            <Select
+                              {...field}
+                              value={field.value || undefined}
+                              placeholder="Chọn operator"
+                              disabled={disabled || isDataEndConditionDisabled}
+                              options={DATA_END_CONDITION_OPERATORS}
+                              onChange={(value) => {
+                                field.onChange(value);
+                                if (!DATA_END_VALUE_REQUIRED_OPERATORS.has(value)) {
+                                  setValue('data_end_condition_value', '');
+                                }
+                              }}
+                              allowClear
+                            />
+                          )}
+                        />
+                      </Form.Item>
+                    </Col>
+
+                    <Col xs={24}>
+                      <Form.Item
+                        label={`value${isDataEndValueRequired ? ' *' : ''}`}
+                        validateStatus={errors.data_end_condition_value ? 'error' : ''}
+                        help={errors.data_end_condition_value?.message}
+                      >
+                        <Controller
+                          name="data_end_condition_value"
+                          control={control}
+                          render={({ field }) => (
+                            <Input
+                              {...field}
+                              value={field.value || ''}
+                              placeholder="Nhập giá trị so sánh"
+                              disabled={
+                                disabled ||
+                                isDataEndConditionDisabled ||
+                                !isDataEndValueRequired
+                              }
+                            />
+                          )}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </Card>
               </Col>
             </Row>
           </div>

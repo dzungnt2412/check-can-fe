@@ -153,7 +153,12 @@ Body (dùng spreadsheetId):
   "gid": "1592630955",
   "header_row_index": 2,
   "data_start_row_index": 3,
-  "data_end_row_index": 200
+  "data_end_row_index": 200,
+  "data_end_condition": {
+    "column_name": "Trạng thái",
+    "operator": "eq",
+    "value": "Hết hàng"
+  }
 }
 ```
 
@@ -162,6 +167,8 @@ Ghi chú:
 - `sources` không còn lưu `investor_id` và không còn lưu `chu_dau_tu`.
 - Khuyến nghị truyền `project_id`, `agency_id` để hệ thống tự gán `du_an`, `dai_ly`.
 - Nếu chưa có id, vẫn có thể truyền trực tiếp `du_an`, `dai_ly`.
+- Có thể cấu hình `data_end_condition` để tự xác định điểm dừng khi sync nếu không muốn set `data_end_row_index` cố định.
+- `data_end_row_index` luôn được ưu tiên hơn `data_end_condition` nếu truyền đồng thời.
 
 ### Response
 
@@ -258,6 +265,70 @@ Ví dụ: `DELETE /api/sources/3`
 ### Create
 
 `POST /api/projects`
+
+---
+
+## 4.8) Tìm kiếm Units theo catalog fields
+
+### List units cơ bản
+
+`GET /api/units`
+
+Các filter cũ vẫn giữ nguyên:
+
+- `unit_code`
+- `project_id`
+- `agency_id`
+- `schema_id`
+- `page`
+- `limit`
+
+### Filter gần đúng theo 1 catalog field
+
+Có thể truyền theo `catalog_field_key` hoặc `catalog_field_id`.
+
+Ví dụ theo key:
+
+`GET /api/units?catalog_field_key=ma_can&catalog_field_value=A-10`
+
+Ví dụ theo id:
+
+`GET /api/units?catalog_field_id=5&catalog_field_value=A-10`
+
+Behavior:
+
+- Backend chỉ lấy các `unit` thuộc schema có chứa catalog field đó.
+- Sau đó so khớp gần đúng bằng `ILIKE` trên `units.dynamic_data[field_key]`.
+- Có thể kết hợp với `project_id`, `agency_id`, `schema_id`, `unit_code` theo logic `AND`.
+
+### Filter nhiều catalog cùng lúc
+
+Truyền `catalog_filters` dưới dạng JSON array trong query string.
+
+Ví dụ:
+
+```text
+GET /api/units?catalog_filters=[{"catalog_field_key":"ma_can","value":"A-10"},{"catalog_field_key":"tang","value":"12"}]
+```
+
+Hoặc trộn `catalog_field_id` và `catalog_field_key`:
+
+```text
+GET /api/units?catalog_filters=[{"catalog_field_id":5,"value":"A-10"},{"catalog_field_key":"huong","value":"dong"}]
+```
+
+Behavior:
+
+- Mỗi item trong `catalog_filters` là một điều kiện `AND`.
+- Mỗi điều kiện yêu cầu schema của unit có liên kết tới catalog tương ứng.
+- Giá trị được tìm theo kiểu gần đúng `ILIKE`.
+
+### Validate
+
+- `catalog_field_id` phải là số nguyên dương.
+- `catalog_field_key` chỉ gồm chữ thường, số, `_`, `-`.
+- Khi truyền `catalog_field_id` hoặc `catalog_field_key` thì bắt buộc có `catalog_field_value`.
+- `catalog_filters` phải là JSON array, mỗi item phải có `catalog_field_id` hoặc `catalog_field_key`, và `value`.
 
 ```json
 {
@@ -769,6 +840,21 @@ Transform rule hỗ trợ:
 - `parseViNumber`
 - `extractNumber`
 - `extractInteger`
+- `fillDown` (kéo giá trị từ dòng trước nếu ô hiện tại rỗng, chỉ áp dụng cho mapping được bật rule này)
+- `map:<from>=<to>|<from2>=<to2>`
+
+Ví dụ map giá trị để lưu:
+
+- `transform_rule: "map:1=ocean park|2=ocean park 2"`
+  - Nếu giá trị nguồn là `1` thì lưu `ocean park`
+  - Nếu giá trị nguồn là `2` thì lưu `ocean park 2`
+- Hỗ trợ fallback: `transform_rule: "map:1=ocean park|*=khac"`
+  - Nếu không khớp key cụ thể sẽ lưu `khac`
+
+Kết hợp nhiều rule:
+
+- `transform_rule: "fillDown,map:lk=liền kề|bt=biệt thự|*=khác"`
+  - Dòng rỗng sẽ lấy giá trị dòng trước cùng cột trước khi map
 
 ---
 
@@ -831,6 +917,13 @@ Rule sync hiện tại:
 - Upsert theo khóa `(project_id, unit_code)`.
 - Nếu trùng `mã căn` trong cùng dự án thì update bản ghi cũ, không tạo mới.
 - Nếu không trùng thì insert mới.
+- Nếu có `data_end_condition` (và không có `data_end_row_index`), hệ thống sẽ tìm dòng đầu tiên thỏa điều kiện để cắt dữ liệu.
+
+`data_end_condition` hỗ trợ:
+
+- `column_name` hoặc `column_index` (0-based)
+- `operator`: `eq`, `ne`, `contains`, `empty`, `not_empty`
+- `value`: bắt buộc với `eq`, `ne`, `contains`
 
 ---
 

@@ -188,6 +188,8 @@ export default function SheetInspectorPanel({
                 disabled={locked || !sheetTabs.length}
                 placeholder="Chưa có tab"
                 style={{ width: '100%' }}
+                showSearch
+                optionFilterProp="label"
                 options={sheetTabs.map((tab) => ({
                   value: tab.sheetName,
                   label: `${tab.sheetName}${tab.gid ? ` (gid: ${tab.gid})` : ''}`,

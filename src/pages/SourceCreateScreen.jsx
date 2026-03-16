@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Button, Space } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
@@ -10,6 +10,17 @@ import ActionBar from '../components/ActionBar';
 
 export default function SourceCreateScreen({ catalog, mapping }) {
   const navigate = useNavigate();
+
+  const outputSuggestions = useMemo(() => {
+    const names = [
+      ...(catalog.allProjects || []).map((item) => item?.name),
+      ...(catalog.investors || []).map((item) => item?.name),
+    ]
+      .map((name) => String(name || '').trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(names)).map((value) => ({ value }));
+  }, [catalog.allProjects, catalog.investors]);
 
   useEffect(() => {
     mapping.resetForCreate();
@@ -72,6 +83,7 @@ export default function SourceCreateScreen({ catalog, mapping }) {
             headerRowIndex={mapping.headerRowIndex}
             dataStartRowIndex={mapping.dataStartRowIndex}
             dataEndRowIndex={mapping.dataEndRowIndex}
+            headers={mapping.headers}
             loading={mapping.loadingCreateSource}
             allProjects={catalog.allProjects}
             agencies={catalog.agencies}
@@ -97,6 +109,7 @@ export default function SourceCreateScreen({ catalog, mapping }) {
             errorSchema={mapping.errorSchema}
             onSelectSchema={mapping.selectSchema}
             onChange={mapping.updateMappingValue}
+            outputSuggestions={outputSuggestions}
           />
 
           <Space>

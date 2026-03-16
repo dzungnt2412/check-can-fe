@@ -35,10 +35,8 @@ export default function UnitDetailCard({ detail, schemaFields, loading, error })
           <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }}>
             <Descriptions.Item label="ID">{detail.id}</Descriptions.Item>
             <Descriptions.Item label="unit_code">{detail.unit_code || '-'}</Descriptions.Item>
-            <Descriptions.Item label="project_id">{detail.project_id || '-'}</Descriptions.Item>
             <Descriptions.Item label="agency_id">{detail.agency_id || '-'}</Descriptions.Item>
             <Descriptions.Item label="schema_id">{detail.schema_id || '-'}</Descriptions.Item>
-            <Descriptions.Item label="project_name">{detail.project_name || '-'}</Descriptions.Item>
             <Descriptions.Item label="agency_name">{detail.agency_name || '-'}</Descriptions.Item>
             <Descriptions.Item label="created_at">{detail.created_at || '-'}</Descriptions.Item>
             <Descriptions.Item label="updated_at">{detail.updated_at || '-'}</Descriptions.Item>

@@ -30,6 +30,49 @@ function normalizeAgency(item) {
   };
 }
 
+function normalizeDataEndCondition(dataEndCondition) {
+  if (!dataEndCondition || typeof dataEndCondition !== 'object') {
+    return undefined;
+  }
+
+  const operator = String(dataEndCondition.operator || '').trim();
+  if (!operator) return undefined;
+
+  const rawColumnIndex = dataEndCondition.column_index;
+  const hasColumnIndex =
+    rawColumnIndex !== undefined &&
+    rawColumnIndex !== null &&
+    String(rawColumnIndex).trim() !== '';
+  const columnName = String(dataEndCondition.column_name || '').trim();
+  const conditionValue = String(dataEndCondition.value ?? '').trim();
+
+  const payload = {
+    operator,
+  };
+
+  if (hasColumnIndex) {
+    const parsedIndex = Number(rawColumnIndex);
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0) {
+      return undefined;
+    }
+    payload.column_index = parsedIndex;
+  } else if (columnName) {
+    payload.column_name = columnName;
+  } else {
+    return undefined;
+  }
+
+  if (conditionValue) {
+    payload.value = conditionValue;
+  }
+
+  if (['eq', 'ne', 'contains'].includes(operator) && !payload.value) {
+    return undefined;
+  }
+
+  return payload;
+}
+
 function normalizeSource(item) {
   return {
     ...item,
@@ -49,6 +92,7 @@ function normalizeSource(item) {
     header_row_index: item.header_row_index ?? '',
     data_start_row_index: item.data_start_row_index ?? '',
     data_end_row_index: item.data_end_row_index ?? '',
+    data_end_condition: normalizeDataEndCondition(item.data_end_condition),
     is_active: item.is_active ?? true,
   };
 }
@@ -235,6 +279,13 @@ export function useInvestors() {
         throw new Error('Cần chọn đại lý hoặc nhập dai_ly');
       }
 
+      const dataEndRowIndex =
+        data.data_end_row_index === '' ? undefined : Number(data.data_end_row_index);
+      const dataEndCondition =
+        dataEndRowIndex === undefined
+          ? normalizeDataEndCondition(data.data_end_condition)
+          : undefined;
+
       await sourceApi.update(id, {
         source_code: data.source_code?.trim(),
         source_name: data.source_name?.trim(),
@@ -248,7 +299,8 @@ export function useInvestors() {
         gid: data.gid?.toString().trim() || undefined,
         header_row_index: data.header_row_index === '' ? undefined : Number(data.header_row_index),
         data_start_row_index: data.data_start_row_index === '' ? undefined : Number(data.data_start_row_index),
-        data_end_row_index: data.data_end_row_index === '' ? undefined : Number(data.data_end_row_index),
+        data_end_row_index: dataEndRowIndex,
+        data_end_condition: dataEndCondition,
         is_active: data.is_active ?? true,
       });
 

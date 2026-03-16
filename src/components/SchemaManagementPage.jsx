@@ -498,7 +498,7 @@ export default function SchemaManagementPage() {
             <Input placeholder="VD: Default Schema" />
           </Form.Item>
           <Form.Item label="status" name="status">
-            <Select options={STATUS_OPTIONS} />
+            <Select showSearch optionFilterProp="label" options={STATUS_OPTIONS} />
           </Form.Item>
         </Form>
       </Modal>
@@ -544,17 +544,17 @@ export default function SchemaManagementPage() {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item label="data_type" name="data_type" rules={[{ required: true }]}>
-                <Select options={DATA_TYPE_OPTIONS} />
+                <Select showSearch optionFilterProp="label" options={DATA_TYPE_OPTIONS} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item label="input_type" name="input_type" rules={[{ required: true }]}>
-                <Select options={INPUT_TYPE_OPTIONS} />
+                <Select showSearch optionFilterProp="label" options={INPUT_TYPE_OPTIONS} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item label="status" name="status">
-                <Select options={STATUS_OPTIONS} />
+                <Select showSearch optionFilterProp="label" options={STATUS_OPTIONS} />
               </Form.Item>
             </Col>
           </Row>
@@ -606,7 +606,7 @@ export default function SchemaManagementPage() {
             </Col>
             <Col span={8}>
               <Form.Item label="status" name="status">
-                <Select options={STATUS_OPTIONS} />
+                <Select showSearch optionFilterProp="label" options={STATUS_OPTIONS} />
               </Form.Item>
             </Col>
           </Row>
@@ -646,7 +646,7 @@ export default function SchemaManagementPage() {
             </Col>
             <Col span={8}>
               <Form.Item label="status" name="status">
-                <Select options={STATUS_OPTIONS} />
+                <Select showSearch optionFilterProp="label" options={STATUS_OPTIONS} />
               </Form.Item>
             </Col>
           </Row>

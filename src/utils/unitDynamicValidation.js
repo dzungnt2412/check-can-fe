@@ -36,10 +36,6 @@ export function validateFixedFields(values) {
     errors.unit_code = 'unit_code là bắt buộc';
   }
 
-  if (!Number(values.project_id)) {
-    errors.project_id = 'project_id là bắt buộc';
-  }
-
   if (!Number(values.agency_id)) {
     errors.agency_id = 'agency_id là bắt buộc';
   }

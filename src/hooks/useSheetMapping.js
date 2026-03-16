@@ -12,23 +12,18 @@ const transformOptions = [
   'extractInteger',
 ];
 
+const MAP_TRANSFORM_PREFIX = 'map:';
+const FILL_DOWN_TOKEN = 'fillDown';
+
 const mappingRowSchema = z
   .object({
     schema_field_id: z.union([z.string(), z.number()]),
     source_column_name: z.string().optional(),
     source_column_index: z.number().int().nonnegative().optional(),
     transform_rule: z.string().optional(),
-    default_value: z.string().optional(),
+    default_value: z.union([z.string(), z.null()]).optional(),
     is_active: z.boolean(),
-  })
-  .refine(
-    (row) => {
-      const hasName = !!row.source_column_name?.trim();
-      const hasIndex = row.source_column_index !== undefined && row.source_column_index !== null;
-      return hasName || hasIndex;
-    },
-    { message: 'Cần source_column_name hoặc source_column_index' }
-  );
+  });
 
 const mappingPayloadSchema = z.object({
   mappings: z.array(mappingRowSchema),
@@ -40,6 +35,66 @@ function normalizeText(value) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
+}
+
+function normalizeSourceCode(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+}
+
+function buildAutoSourceCode(sourceName) {
+  const slug = normalizeSourceCode(sourceName);
+  const fallback = `source_${Date.now()}`;
+  return slug || fallback;
+}
+
+function normalizeDataEndCondition(dataEndCondition) {
+  if (!dataEndCondition || typeof dataEndCondition !== 'object') {
+    return undefined;
+  }
+
+  const operator = String(dataEndCondition.operator || '').trim();
+  if (!operator) return undefined;
+
+  const rawColumnIndex = dataEndCondition.column_index;
+  const hasColumnIndex =
+    rawColumnIndex !== undefined &&
+    rawColumnIndex !== null &&
+    String(rawColumnIndex).trim() !== '';
+  const columnName = String(dataEndCondition.column_name || '').trim();
+  const conditionValue = String(dataEndCondition.value ?? '').trim();
+
+  const nextCondition = {
+    operator,
+  };
+
+  if (hasColumnIndex) {
+    const parsedIndex = Number(rawColumnIndex);
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0) {
+      return undefined;
+    }
+    nextCondition.column_index = parsedIndex;
+  } else if (columnName) {
+    nextCondition.column_name = columnName;
+  } else {
+    return undefined;
+  }
+
+  if (conditionValue) {
+    nextCondition.value = conditionValue;
+  }
+
+  if (['eq', 'ne', 'contains'].includes(operator) && !nextCondition.value) {
+    return undefined;
+  }
+
+  return nextCondition;
 }
 
 function bigrams(str) {
@@ -110,6 +165,72 @@ function parsePreviewResult(result) {
   return { headers, rows };
 }
 
+function createMapEntry(item = {}) {
+  return {
+    id: item.id || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    input: String(item.input ?? ''),
+    output: String(item.output ?? ''),
+  };
+}
+
+function parseCompositeTransformRule(transformRule) {
+  const ruleText = String(transformRule || '').trim();
+  if (!ruleText) return null;
+
+  const mapStartIndex = ruleText.indexOf(MAP_TRANSFORM_PREFIX);
+  const hasMapRule = mapStartIndex >= 0;
+
+  const prefixText = hasMapRule ? ruleText.slice(0, mapStartIndex) : ruleText;
+  const prefixTokens = prefixText
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  const hasFillDown = prefixTokens.includes(FILL_DOWN_TOKEN);
+  const primitiveTransform = prefixTokens.find((token) => transformOptions.includes(token)) || '';
+
+  if (!hasMapRule) {
+    return {
+      fillDownEnabled: hasFillDown,
+      mapEnabled: false,
+      entries: [],
+      fallback: '',
+      primitiveTransform,
+    };
+  }
+
+  const body = ruleText.slice(mapStartIndex + MAP_TRANSFORM_PREFIX.length);
+
+  const entries = [];
+  let fallback = '';
+
+  body.split('|').forEach((part) => {
+    const token = String(part || '').trim();
+    if (!token) return;
+
+    const delimiterIndex = token.indexOf('=');
+    if (delimiterIndex < 0) return;
+
+    const input = token.slice(0, delimiterIndex).trim();
+    const output = token.slice(delimiterIndex + 1).trim();
+
+    if (input === '*') {
+      fallback = output;
+      return;
+    }
+
+    entries.push(createMapEntry({ input, output }));
+  });
+
+  return {
+    fillDownEnabled: hasFillDown,
+    mapEnabled: true,
+    entries,
+    fallback,
+    primitiveTransform,
+  };
+}
+
 function normalizeMappingRowFromApi(item) {
   const schemaField = item?.schema_field || item?.field || {};
   const schemaId =
@@ -136,6 +257,8 @@ function normalizeMappingRowFromApi(item) {
     schemaField?.field_key ??
     '';
 
+  const parsedTransformRule = parseCompositeTransformRule(item?.transform_rule);
+
   return {
     schema_field_id: fieldId,
     schema_field_name: fieldName,
@@ -144,8 +267,14 @@ function normalizeMappingRowFromApi(item) {
       item?.source_column_index === null || item?.source_column_index === undefined
         ? ''
         : item?.source_column_index,
-    transform_rule: item?.transform_rule || '',
-    default_value: item?.default_value ?? '',
+    transform_rule: parsedTransformRule?.mapEnabled
+      ? (parsedTransformRule?.primitiveTransform || '')
+      : (parsedTransformRule?.primitiveTransform || item?.transform_rule || ''),
+    default_value: parsedTransformRule?.mapEnabled ? '' : (item?.default_value ?? ''),
+    fill_down_enabled: Boolean(parsedTransformRule?.fillDownEnabled),
+    value_map_enabled: Boolean(parsedTransformRule?.mapEnabled),
+    value_map_entries: parsedTransformRule?.entries || [],
+    value_map_fallback: parsedTransformRule?.fallback || '',
     is_active: item?.is_active ?? item?.status !== 'inactive',
     _schema_id: schemaId,
   };
@@ -264,13 +393,21 @@ export function useSheetMapping() {
               : '';
 
         if (existing) {
+          const normalizedExisting = {
+            fill_down_enabled: false,
+            value_map_enabled: false,
+            value_map_entries: [],
+            value_map_fallback: '',
+            ...existing,
+          };
+
           if (!existing.default_value && autoDefault) {
             return {
-              ...existing,
+              ...normalizedExisting,
               default_value: autoDefault,
             };
           }
-          return existing;
+          return normalizedExisting;
         }
 
         return (
@@ -281,6 +418,10 @@ export function useSheetMapping() {
             source_column_index: '',
             transform_rule: 'trim',
             default_value: autoDefault || '',
+            fill_down_enabled: false,
+            value_map_enabled: false,
+            value_map_entries: [],
+            value_map_fallback: '',
             is_active: true,
           }
         );
@@ -639,13 +780,13 @@ export function useSheetMapping() {
     setErrorMapping('');
 
     try {
-      const projectId = Number(formValues.project_id);
       const agencyId = Number(formValues.agency_id);
-      const duAn = formValues.du_an?.trim();
       const daiLy = formValues.dai_ly?.trim();
+      const sourceName = formValues.source_name?.trim();
+      const sourceCode = buildAutoSourceCode(sourceName);
 
-      if (!(projectId > 0 || duAn)) {
-        throw new Error('Thiếu Dự án: chọn project hoặc nhập du_an fallback');
+      if (!sourceName) {
+        throw new Error('Thiếu source_name');
       }
 
       if (!(agencyId > 0 || daiLy)) {
@@ -653,11 +794,9 @@ export function useSheetMapping() {
       }
 
       const payload = {
-        source_code: formValues.source_code,
-        source_name: formValues.source_name,
-        project_id: projectId > 0 ? projectId : undefined,
+        source_code: sourceCode,
+        source_name: sourceName,
         agency_id: agencyId > 0 ? agencyId : undefined,
-        du_an: duAn || undefined,
         dai_ly: daiLy || undefined,
         spreadsheet_id: spreadsheetId,
         spreadsheet_url: sheetUrl || undefined,
@@ -667,6 +806,10 @@ export function useSheetMapping() {
         data_start_row_index:
           dataStartRowIndex === '' ? undefined : Number(dataStartRowIndex),
         data_end_row_index: dataEndRowIndex === '' ? undefined : Number(dataEndRowIndex),
+        data_end_condition:
+          dataEndRowIndex === ''
+            ? normalizeDataEndCondition(formValues?.data_end_condition)
+            : undefined,
       };
 
       const response = await sourceApi.createSource(payload);
@@ -680,7 +823,7 @@ export function useSheetMapping() {
       setSourceId(String(id));
       setSourceCreated(true);
       setSourceDefaults({
-        projectValue: data?.du_an || data?.project_name || duAn || '',
+        projectValue: data?.du_an || data?.project_name || '',
         agencyValue: data?.dai_ly || data?.agency_name || daiLy || '',
       });
       setSuccessMessage('Tạo source thành công');
@@ -695,27 +838,110 @@ export function useSheetMapping() {
     }
   }
 
+  function validateValueMapRule(mapping) {
+    const fieldName = mapping.schema_field_name || mapping.schema_field_id || 'field';
+
+    if (!mapping.value_map_enabled) return null;
+
+    const cleanedEntries = (mapping.value_map_entries || [])
+      .map((entry) => ({
+        input: String(entry?.input ?? '').trim(),
+        output: String(entry?.output ?? '').trim(),
+      }))
+      .filter((entry) => entry.input || entry.output);
+
+    if (!cleanedEntries.length) {
+      return `Value Mapping của ${fieldName} cần ít nhất 1 dòng`;
+    }
+
+    const seenInputs = new Set();
+    for (let i = 0; i < cleanedEntries.length; i += 1) {
+      const entry = cleanedEntries[i];
+      const rowLabel = `dòng ${i + 1}`;
+
+      if (!entry.input || !entry.output) {
+        return `Value Mapping ${fieldName}: ${rowLabel} cần đủ Input và Output`;
+      }
+
+      if (entry.input.includes('|') || entry.output.includes('|')) {
+        return `Value Mapping ${fieldName}: ${rowLabel} không được chứa ký tự |`;
+      }
+
+      if (entry.input.includes('=')) {
+        return `Value Mapping ${fieldName}: ${rowLabel} Input không được chứa ký tự =`;
+      }
+
+      const normalizedInput = entry.input.toLowerCase();
+      if (seenInputs.has(normalizedInput)) {
+        return `Value Mapping ${fieldName}: Input bị trùng (${entry.input})`;
+      }
+      seenInputs.add(normalizedInput);
+    }
+
+    const fallback = String(mapping.value_map_fallback ?? '').trim();
+    if (fallback.includes('|')) {
+      return `Value Mapping ${fieldName}: Fallback output không được chứa ký tự |`;
+    }
+
+    return null;
+  }
+
   function buildMappingPayload() {
     const cleaned = mappings
-      .map((item) => ({
-        schema_field_id: item.schema_field_id,
-        source_column_name: item.source_column_name?.trim() || undefined,
-        source_column_index:
-          item.source_column_index === '' || item.source_column_index === undefined
-            ? undefined
-            : Number(item.source_column_index),
-        transform_rule: transformOptions.includes(item.transform_rule)
-          ? item.transform_rule
-          : undefined,
-        default_value: item.default_value ?? '',
-        is_active: Boolean(item.is_active),
-      }))
-      .filter((item) => {
-        const hasField = item.schema_field_id !== undefined && item.schema_field_id !== null;
-        const hasName = !!item.source_column_name;
-        const hasIndex = item.source_column_index !== undefined;
-        return hasField && (hasName || hasIndex);
-      });
+      .map((item) => {
+        const fillDownEnabled = Boolean(item.fill_down_enabled);
+        const valueMapEnabled = Boolean(item.value_map_enabled);
+
+        const mapEntries = (item.value_map_entries || [])
+          .map((entry) => ({
+            input: String(entry?.input ?? '').trim(),
+            output: String(entry?.output ?? '').trim(),
+          }))
+          .filter((entry) => entry.input && entry.output);
+
+        const fallback = String(item.value_map_fallback ?? '').trim();
+
+        const serializedMapRule = (() => {
+          if (!valueMapEnabled) return undefined;
+
+          const tokens = mapEntries.map((entry) => `${entry.input}=${entry.output}`);
+          if (fallback) {
+            tokens.push(`*=${fallback}`);
+          }
+
+          return `${MAP_TRANSFORM_PREFIX}${tokens.join('|')}`;
+        })();
+
+        const transformRuleTokens = [];
+        if (fillDownEnabled) {
+          transformRuleTokens.push(FILL_DOWN_TOKEN);
+        }
+
+        if (valueMapEnabled && serializedMapRule) {
+          transformRuleTokens.push(serializedMapRule);
+        }
+
+        if (!valueMapEnabled && transformOptions.includes(item.transform_rule)) {
+          transformRuleTokens.push(item.transform_rule);
+        }
+
+        const serializedTransformRule = transformRuleTokens.length
+          ? transformRuleTokens.join(',')
+          : undefined;
+
+        return {
+          schema_field_id: item.schema_field_id,
+          source_column_name: item.source_column_name?.trim() || undefined,
+          source_column_index:
+            item.source_column_index === '' || item.source_column_index === undefined
+              ? undefined
+              : Number(item.source_column_index),
+          transform_rule: serializedTransformRule,
+          default_value: valueMapEnabled ? null : (item.default_value ?? ''),
+          is_active: Boolean(item.is_active),
+        };
+      })
+      .filter((item) => item.schema_field_id !== undefined && item.schema_field_id !== null);
 
     return { mappings: cleaned };
   }
@@ -736,6 +962,15 @@ export function useSheetMapping() {
     setSuccessMessage('');
 
     try {
+      const invalidMessage = mappings
+        .map((mapping) => validateValueMapRule(mapping))
+        .find(Boolean);
+
+      if (invalidMessage) {
+        setErrorMapping(invalidMessage);
+        return { ok: false, message: invalidMessage };
+      }
+
       const payload = buildMappingPayload();
       mappingPayloadSchema.parse(payload);
       await sourceApi.saveMappings(sourceId, payload);

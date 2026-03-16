@@ -76,6 +76,8 @@ function DynamicFieldInput({ field, control }) {
             onChange={(val) => controlledField.onChange(val ?? '')}
             options={field.options || []}
             allowClear
+            showSearch
+            optionFilterProp="label"
             placeholder={`Chọn ${field.field_label || field.field_key}`}
             style={{ width: '100%' }}
           />
@@ -156,7 +158,6 @@ export default function UnitFormCard({
   initialValues,
   schemaFields,
   schemaOptions,
-  projectOptions,
   agencyOptions,
   loadingSubmit,
   submitError,
@@ -181,7 +182,6 @@ export default function UnitFormCard({
   } = useForm({
     defaultValues: {
       unit_code: '',
-      project_id: '',
       agency_id: '',
       schema_id: '',
       dynamic: {},
@@ -197,7 +197,6 @@ export default function UnitFormCard({
 
     reset({
       unit_code: initialValues?.unit_code ?? '',
-      project_id: initialValues?.project_id ?? '',
       agency_id: initialValues?.agency_id ?? '',
       schema_id: initialValues?.schema_id ?? '',
       dynamic: dynamicDefaults,
@@ -279,7 +278,6 @@ export default function UnitFormCard({
 
     onSubmit({
       unit_code: values.unit_code.trim(),
-      project_id: Number(values.project_id),
       agency_id: Number(values.agency_id),
       schema_id: Number(values.schema_id),
       dynamic_data,
@@ -318,6 +316,7 @@ export default function UnitFormCard({
                       onChange={(value) => field.onChange(value ?? '')}
                       options={schemaOptions}
                       showSearch
+                      optionFilterProp="label"
                       allowClear
                       placeholder="Chọn schema_id"
                       style={{ width: '100%' }}
@@ -327,32 +326,7 @@ export default function UnitFormCard({
               </Form.Item>
             </Col>
 
-            <Col xs={24} sm={8}>
-              <Form.Item
-                label="project_id *"
-                validateStatus={errors.project_id ? 'error' : ''}
-                help={errors.project_id?.message}
-              >
-                <Controller
-                  name="project_id"
-                  control={control}
-                  render={({ field }) => (
-                    <Select
-                      value={field.value || undefined}
-                      onChange={(value) => field.onChange(value ?? '')}
-                      options={projectOptions}
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder="Chọn project"
-                      style={{ width: '100%' }}
-                    />
-                  )}
-                />
-              </Form.Item>
-            </Col>
-
-            <Col xs={24} sm={8}>
+            <Col xs={24} sm={12}>
               <Form.Item
                 label="agency_id *"
                 validateStatus={errors.agency_id ? 'error' : ''}

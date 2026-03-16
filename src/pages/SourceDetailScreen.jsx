@@ -13,6 +13,17 @@ export default function SourceDetailScreen({ catalog, mapping }) {
   const navigate = useNavigate();
   const { sourceId: sourceIdParam } = useParams();
 
+  const outputSuggestions = useMemo(() => {
+    const names = [
+      ...(catalog.allProjects || []).map((item) => item?.name),
+      ...(catalog.investors || []).map((item) => item?.name),
+    ]
+      .map((name) => String(name || '').trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(names)).map((value) => ({ value }));
+  }, [catalog.allProjects, catalog.investors]);
+
   const sourceDetail = useMemo(
     () => catalog.sources.find((item) => String(item.id) === String(sourceIdParam)) || null,
     [catalog.sources, sourceIdParam]
@@ -155,6 +166,7 @@ export default function SourceDetailScreen({ catalog, mapping }) {
             headerRowIndex={mapping.headerRowIndex}
             dataStartRowIndex={mapping.dataStartRowIndex}
             dataEndRowIndex={mapping.dataEndRowIndex}
+            headers={mapping.headers}
             loading={savingSource}
             allProjects={catalog.allProjects}
             agencies={catalog.agencies}
@@ -192,6 +204,7 @@ export default function SourceDetailScreen({ catalog, mapping }) {
             errorSchema={mapping.errorSchema}
             onSelectSchema={mapping.selectSchema}
             onChange={mapping.updateMappingValue}
+            outputSuggestions={outputSuggestions}
             disabled={!mappingEditing}
           />
 

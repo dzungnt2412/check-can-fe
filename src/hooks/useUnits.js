@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { schemaFieldApi, unitApi } from '../api';
+import { useSearchParams } from 'react-router-dom';
+import { fieldCatalogApi, schemaFieldApi, unitApi } from '../api';
 import {
   extractResponseData,
   parseSchemaFieldList,
   sortSchemaFields,
 } from '../utils/schemaFieldMapper';
+import {
+  buildUnitListParams,
+  buildUnitListSearchParams,
+  normalizeCatalogFilters,
+  parseUnitListSearchParams,
+} from '../utils/unitListQueryParams';
 
 function extractData(response) {
   return response?.data?.data ?? response?.data ?? {};
@@ -14,34 +21,76 @@ function normalizeUnit(item) {
   return {
     id: item.id,
     unit_code: item.unit_code ?? '',
-    project_id: item.project_id ?? '',
     agency_id: item.agency_id ?? '',
     schema_id: item.schema_id ?? '',
     dynamic_data: item.dynamic_data ?? {},
-    project_name: item.project_name ?? '',
     agency_name: item.agency_name ?? '',
     created_at: item.created_at,
     updated_at: item.updated_at,
   };
 }
 
-export function useUnits() {
-  const initialFilters = {
+function normalizeCatalogField(item) {
+  return {
+    id: item.id,
+    field_key: item.field_key ?? item.key ?? '',
+    field_label: item.field_label ?? item.label ?? item.name ?? item.field_key ?? item.key ?? '',
+    status: item.status ?? (item.is_active ? 'active' : 'inactive'),
+  };
+}
+
+function createCatalogFilterRow(item = {}) {
+  return {
+    row_id: item.row_id || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    catalog_field_id: item.catalog_field_id ?? '',
+    catalog_field_key: item.catalog_field_key ?? '',
+    value: item.value ?? '',
+  };
+}
+
+function parseCatalogFieldList(data) {
+  const list = Array.isArray(data)
+    ? data
+    : data?.items || data?.catalogs || data?.fields || [];
+
+  return list
+    .map(normalizeCatalogField)
+    .filter((item) => item.id && item.field_key)
+    .sort((a, b) => String(a.field_label || a.field_key).localeCompare(String(b.field_label || b.field_key), 'vi'));
+}
+
+function createEmptyFilters() {
+  return {
     unit_code: '',
-    project_id: '',
     agency_id: '',
     schema_id: '',
+    catalog_filters: [],
   };
+}
+
+export function useUnits() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [initialQuery] = useState(() => parseUnitListSearchParams(searchParams));
+
+  const initialFilters = useMemo(() => ({
+    ...createEmptyFilters(),
+    ...initialQuery.filters,
+    catalog_filters: (initialQuery.filters.catalog_filters || []).map((item) => createCatalogFilterRow(item)),
+  }), [initialQuery]);
 
   const [units, setUnits] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
   const [listError, setListError] = useState('');
 
   const [filters, setFilters] = useState(initialFilters);
+  const [catalogFields, setCatalogFields] = useState([]);
+  const [loadingCatalogFields, setLoadingCatalogFields] = useState(false);
+  const [catalogFieldError, setCatalogFieldError] = useState('');
 
   const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 10,
+    page: initialQuery.page,
+    limit: initialQuery.limit,
     total: 0,
     totalPages: 1,
   });
@@ -93,18 +142,32 @@ export function useUnits() {
     }
   }, [fetchSchemaFields]);
 
+  const fetchCatalogFields = useCallback(async () => {
+    setLoadingCatalogFields(true);
+    setCatalogFieldError('');
+
+    try {
+      const response = await fieldCatalogApi.getAll({ include_inactive: true });
+      const data = extractResponseData(response);
+      const parsed = parseCatalogFieldList(data).filter((item) => item.status === 'active');
+      setCatalogFields(parsed);
+    } catch (error) {
+      setCatalogFields([]);
+      setCatalogFieldError(error?.response?.data?.message || 'Tải field catalog thất bại');
+    } finally {
+      setLoadingCatalogFields(false);
+    }
+  }, []);
+
   function buildListParams(page = pagination.page, limit = pagination.limit, criteria = filters) {
-    const raw = {
+    return buildUnitListParams({
       page,
       limit,
-      ...criteria,
-    };
-
-    return Object.entries(raw).reduce((acc, [key, value]) => {
-      if (value === '' || value === null || value === undefined) return acc;
-      acc[key] = value;
-      return acc;
-    }, {});
+      filters: {
+        ...criteria,
+        catalog_filters: normalizeCatalogFilters(criteria.catalog_filters),
+      },
+    });
   }
 
   const fetchUnits = useCallback(async (page = 1, limit = pagination.limit, criteria = filters) => {
@@ -112,6 +175,7 @@ export function useUnits() {
     setListError('');
     try {
       const params = buildListParams(page, limit, criteria);
+      setSearchParams(buildUnitListSearchParams({ page, limit, filters: criteria }), { replace: true });
       const response = await unitApi.getAll(params);
       const data = extractData(response);
       const rows = Array.isArray(data?.data) ? data.data : [];
@@ -132,11 +196,20 @@ export function useUnits() {
 
   useEffect(() => {
     fetchSchemaCatalog();
-  }, [fetchSchemaCatalog]);
+    fetchCatalogFields();
+  }, [fetchSchemaCatalog, fetchCatalogFields]);
 
   useEffect(() => {
-    fetchUnits(1, pagination.limit);
+    fetchUnits(pagination.page, pagination.limit, filters);
   }, [fetchUnits, pagination.limit]);
+
+  const catalogFieldOptions = useMemo(
+    () => catalogFields.map((item) => ({
+      value: item.field_key,
+      label: `${item.field_label || item.field_key} (${item.field_key})`,
+    })),
+    [catalogFields]
+  );
 
   function resetErrors() {
     setDetailError('');
@@ -226,12 +299,55 @@ export function useUnits() {
   }
 
   function applyFilters() {
+    setPagination((prev) => ({ ...prev, page: 1 }));
     fetchUnits(1, pagination.limit, filters);
   }
 
   function resetFilters() {
-    setFilters(initialFilters);
-    fetchUnits(1, pagination.limit, initialFilters);
+    const emptyFilters = createEmptyFilters();
+    setFilters(emptyFilters);
+    fetchUnits(1, pagination.limit, emptyFilters);
+  }
+
+  function updateFilter(key, value) {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    setFilters((prev) => ({ ...prev, [key]: value ?? '' }));
+  }
+
+  function addCatalogFilter() {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    setFilters((prev) => ({
+      ...prev,
+      catalog_filters: [...(prev.catalog_filters || []), createCatalogFilterRow()],
+    }));
+  }
+
+  function updateCatalogFilter(rowId, patch) {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    setFilters((prev) => ({
+      ...prev,
+      catalog_filters: (prev.catalog_filters || []).map((item) => {
+        if (item.row_id !== rowId) return item;
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'catalog_field_key')) {
+          return {
+            ...item,
+            ...patch,
+            catalog_field_id: '',
+          };
+        }
+
+        return { ...item, ...patch };
+      }),
+    }));
+  }
+
+  function removeCatalogFilter(rowId) {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    setFilters((prev) => ({
+      ...prev,
+      catalog_filters: (prev.catalog_filters || []).filter((item) => item.row_id !== rowId),
+    }));
   }
 
   async function submitCreate(payload) {
@@ -287,6 +403,13 @@ export function useUnits() {
     listError,
     filters,
     setFilters,
+    updateFilter,
+    addCatalogFilter,
+    updateCatalogFilter,
+    removeCatalogFilter,
+    catalogFieldOptions,
+    loadingCatalogFields,
+    catalogFieldError,
     pagination,
     view,
     detail,
