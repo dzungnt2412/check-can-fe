@@ -186,6 +186,7 @@ export default function UnitFormCard({
       schema_id: '',
       dynamic: {},
     },
+    shouldFocusError: false,
   });
 
   useEffect(() => {

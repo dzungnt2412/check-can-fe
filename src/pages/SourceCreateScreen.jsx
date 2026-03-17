@@ -77,6 +77,7 @@ export default function SourceCreateScreen({ catalog, mapping }) {
           />
 
           <SourceForm
+            sheetUrl={mapping.sheetUrl}
             spreadsheetId={mapping.spreadsheetId}
             selectedSheetName={mapping.selectedSheetName}
             selectedGid={mapping.selectedGid}

@@ -160,6 +160,7 @@ export default function SourceDetailScreen({ catalog, mapping }) {
           <SourceForm
             mode="edit"
             initialValues={sourceDetail}
+            sheetUrl={mapping.sheetUrl}
             spreadsheetId={mapping.spreadsheetId}
             selectedSheetName={mapping.selectedSheetName}
             selectedGid={mapping.selectedGid}

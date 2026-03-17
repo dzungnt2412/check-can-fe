@@ -54,21 +54,21 @@ function buildAutoSourceCode(sourceName) {
   return slug || fallback;
 }
 
-function normalizeDataEndCondition(dataEndCondition) {
-  if (!dataEndCondition || typeof dataEndCondition !== 'object') {
+function normalizeDataCondition(dataCondition) {
+  if (!dataCondition || typeof dataCondition !== 'object') {
     return undefined;
   }
 
-  const operator = String(dataEndCondition.operator || '').trim();
+  const operator = String(dataCondition.operator || '').trim();
   if (!operator) return undefined;
 
-  const rawColumnIndex = dataEndCondition.column_index;
+  const rawColumnIndex = dataCondition.column_index;
   const hasColumnIndex =
     rawColumnIndex !== undefined &&
     rawColumnIndex !== null &&
     String(rawColumnIndex).trim() !== '';
-  const columnName = String(dataEndCondition.column_name || '').trim();
-  const conditionValue = String(dataEndCondition.value ?? '').trim();
+  const columnName = String(dataCondition.column_name || '').trim();
+  const conditionValue = String(dataCondition.value ?? '').trim();
 
   const nextCondition = {
     operator,
@@ -597,6 +597,12 @@ export function useSheetMapping() {
     const nextSpreadsheetId = source.spreadsheet_id || parseSpreadsheetId(nextSheetUrl) || '';
     const nextSheetName = source.sheet_name || '';
     const nextGid = source.gid ? String(source.gid) : '';
+    const sourceSchemaId =
+      source.schema_id ||
+      source.schemaId ||
+      source.schema?.id ||
+      source.schema?.schema_id ||
+      '';
 
     setSheetUrl(nextSheetUrl);
     setSpreadsheetId(nextSpreadsheetId);
@@ -625,6 +631,10 @@ export function useSheetMapping() {
       agencyValue: source.dai_ly || source.agency_name || '',
     });
 
+    if (sourceSchemaId) {
+      setSelectedSchemaId(String(sourceSchemaId));
+    }
+
     setSuccessMessage('');
     setErrorMapping('');
 
@@ -638,7 +648,7 @@ export function useSheetMapping() {
       const data = extractData(response);
       const list = Array.isArray(data) ? data : data?.mappings || data?.items || [];
       const normalized = list.map(normalizeMappingRowFromApi);
-      const detectedSchemaId = detectSchemaIdFromMappings(normalized, data);
+      const detectedSchemaId = detectSchemaIdFromMappings(normalized, data) || sourceSchemaId;
 
       if (detectedSchemaId) {
         setSelectedSchemaId(String(detectedSchemaId));
@@ -651,11 +661,8 @@ export function useSheetMapping() {
           const uniqueHeaders = Array.from(new Set(headerNames));
           setHeaders((prev) => (prev?.length ? prev : uniqueHeaders));
         }
-      } else {
-        setMappings([]);
       }
     } catch (error) {
-      setMappings([]);
       setErrorMapping(error?.response?.data?.message || 'Không tải được mapping hiện có');
     }
   }, []);
@@ -793,6 +800,11 @@ export function useSheetMapping() {
         throw new Error('Thiếu Đại lý: chọn agency hoặc nhập dai_ly fallback');
       }
 
+      const normalizedStartRowIndex =
+        dataStartRowIndex === '' ? undefined : Number(dataStartRowIndex);
+      const normalizedEndRowIndex =
+        dataEndRowIndex === '' ? undefined : Number(dataEndRowIndex);
+
       const payload = {
         source_code: sourceCode,
         source_name: sourceName,
@@ -803,13 +815,16 @@ export function useSheetMapping() {
         sheet_name: selectedSheetName,
         gid: selectedGid || undefined,
         header_row_index: Number(headerRowIndex),
-        data_start_row_index:
-          dataStartRowIndex === '' ? undefined : Number(dataStartRowIndex),
-        data_end_row_index: dataEndRowIndex === '' ? undefined : Number(dataEndRowIndex),
+        data_start_row_index: normalizedStartRowIndex,
+        data_end_row_index: normalizedEndRowIndex,
+        data_start_condition:
+          normalizedStartRowIndex === undefined
+            ? normalizeDataCondition(formValues?.data_start_condition) ?? null
+            : null,
         data_end_condition:
-          dataEndRowIndex === ''
-            ? normalizeDataEndCondition(formValues?.data_end_condition)
-            : undefined,
+          normalizedEndRowIndex === undefined
+            ? normalizeDataCondition(formValues?.data_end_condition) ?? null
+            : null,
       };
 
       const response = await sourceApi.createSource(payload);

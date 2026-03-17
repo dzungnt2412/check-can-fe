@@ -1,4 +1,4 @@
-﻿import { useEffect } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -9,7 +9,7 @@ import { PlusOutlined, EditOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
-const DATA_END_CONDITION_OPERATORS = [
+const DATA_CONDITION_OPERATORS = [
   { value: 'eq', label: 'Bằng (=)' },
   { value: 'ne', label: 'Khác (!=)' },
   { value: 'contains', label: 'Chứa' },
@@ -17,7 +17,13 @@ const DATA_END_CONDITION_OPERATORS = [
   { value: 'not_empty', label: 'Không rỗng' },
 ];
 
-const DATA_END_VALUE_REQUIRED_OPERATORS = new Set(['eq', 'ne', 'contains']);
+const DATA_VALUE_REQUIRED_OPERATORS = new Set(['eq', 'ne', 'contains']);
+
+const optionalEnum = (values) =>
+  z.preprocess(
+    (value) => (String(value ?? '').trim() === '' ? undefined : value),
+    z.enum(values).optional()
+  );
 
 function normalizeSlug(value) {
   return String(value || '')
@@ -38,37 +44,37 @@ function buildSourceNameFromAgency(agencyName) {
   return String(agencyName || '').trim().toUpperCase();
 }
 
-function parseDataEndConditionDefaults(dataEndCondition) {
+function parseDataConditionDefaults(dataCondition, prefix) {
   const hasColumnIndex =
-    dataEndCondition?.column_index !== undefined &&
-    dataEndCondition?.column_index !== null &&
-    String(dataEndCondition.column_index).trim() !== '';
+    dataCondition?.column_index !== undefined &&
+    dataCondition?.column_index !== null &&
+    String(dataCondition.column_index).trim() !== '';
 
-  const parsedColumnIndex = hasColumnIndex ? Number(dataEndCondition.column_index) : '';
+  const parsedColumnIndex = hasColumnIndex ? Number(dataCondition.column_index) : '';
 
   return {
-    data_end_condition_field_type: hasColumnIndex ? 'column_index' : 'column_name',
-    data_end_condition_column_name: String(dataEndCondition?.column_name || ''),
-    data_end_condition_column_index:
+    [`${prefix}_field_type`]: hasColumnIndex ? 'column_index' : 'column_name',
+    [`${prefix}_column_name`]: String(dataCondition?.column_name || ''),
+    [`${prefix}_column_index`]:
       hasColumnIndex && Number.isFinite(parsedColumnIndex) ? parsedColumnIndex : '',
-    data_end_condition_operator: String(dataEndCondition?.operator || ''),
-    data_end_condition_value: String(dataEndCondition?.value ?? ''),
+    [`${prefix}_operator`]: String(dataCondition?.operator || ''),
+    [`${prefix}_value`]: String(dataCondition?.value ?? ''),
   };
 }
 
-function buildDataEndConditionPayload(values, { disabled = false } = {}) {
+function buildDataConditionPayload(values, prefix, { disabled = false } = {}) {
   if (disabled) return undefined;
 
-  const fieldType = String(values.data_end_condition_field_type || '').trim();
-  const operator = String(values.data_end_condition_operator || '').trim();
-  const columnName = String(values.data_end_condition_column_name || '').trim();
-  const rawColumnIndex = values.data_end_condition_column_index;
+  const fieldType = String(values[`${prefix}_field_type`] || '').trim();
+  const operator = String(values[`${prefix}_operator`] || '').trim();
+  const columnName = String(values[`${prefix}_column_name`] || '').trim();
+  const rawColumnIndex = values[`${prefix}_column_index`];
   const hasColumnIndex =
     rawColumnIndex !== undefined &&
     rawColumnIndex !== null &&
     String(rawColumnIndex).trim() !== '';
   const columnIndex = hasColumnIndex ? Number(rawColumnIndex) : null;
-  const conditionValue = String(values.data_end_condition_value ?? '').trim();
+  const conditionValue = String(values[`${prefix}_value`] ?? '').trim();
 
   if (!operator) return undefined;
   if (fieldType === 'column_index') {
@@ -79,7 +85,7 @@ function buildDataEndConditionPayload(values, { disabled = false } = {}) {
     return undefined;
   }
 
-  if (DATA_END_VALUE_REQUIRED_OPERATORS.has(operator) && !conditionValue) {
+  if (DATA_VALUE_REQUIRED_OPERATORS.has(operator) && !conditionValue) {
     return undefined;
   }
 
@@ -114,10 +120,15 @@ const sourceSchema = z.object({
   header_row_index: z.union([z.string(), z.number()]).optional(),
   data_start_row_index: z.union([z.string(), z.number()]).optional(),
   data_end_row_index: z.union([z.string(), z.number()]).optional(),
-  data_end_condition_field_type: z.enum(['column_name', 'column_index']).optional(),
+  data_start_condition_field_type: optionalEnum(['column_name', 'column_index']),
+  data_start_condition_column_name: z.string().optional(),
+  data_start_condition_column_index: z.union([z.string(), z.number()]).optional(),
+  data_start_condition_operator: optionalEnum(['eq', 'ne', 'contains', 'empty', 'not_empty']),
+  data_start_condition_value: z.string().optional(),
+  data_end_condition_field_type: optionalEnum(['column_name', 'column_index']),
   data_end_condition_column_name: z.string().optional(),
   data_end_condition_column_index: z.union([z.string(), z.number()]).optional(),
-  data_end_condition_operator: z.enum(['eq', 'ne', 'contains', 'empty', 'not_empty']).optional(),
+  data_end_condition_operator: optionalEnum(['eq', 'ne', 'contains', 'empty', 'not_empty']),
   data_end_condition_value: z.string().optional(),
 }).superRefine((data, ctx) => {
   const hasAgencyId = Number(data.agency_id) > 0;
@@ -131,71 +142,11 @@ const sourceSchema = z.object({
     });
   }
 
-  const hasDataEndConditionInput = [
-    data.data_end_condition_operator,
-    data.data_end_condition_column_name,
-    data.data_end_condition_column_index,
-    data.data_end_condition_value,
-  ].some((item) => String(item ?? '').trim() !== '');
-
-  if (!hasDataEndConditionInput) return;
-
-  const fieldType = String(data.data_end_condition_field_type || '').trim();
-  if (!fieldType) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Cần chọn column_name hoặc column_index',
-      path: ['data_end_condition_field_type'],
-    });
-  }
-
-  if (fieldType === 'column_index') {
-    const rawColumnIndex = data.data_end_condition_column_index;
-    const hasColumnIndex =
-      rawColumnIndex !== undefined &&
-      rawColumnIndex !== null &&
-      String(rawColumnIndex).trim() !== '';
-    const columnIndex = hasColumnIndex ? Number(rawColumnIndex) : NaN;
-
-    if (!hasColumnIndex || !Number.isInteger(columnIndex) || columnIndex < 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'column_index phải là số nguyên >= 0',
-        path: ['data_end_condition_column_index'],
-      });
-    }
-  } else {
-    const columnName = String(data.data_end_condition_column_name || '').trim();
-    if (!columnName) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Cần nhập column_name',
-        path: ['data_end_condition_column_name'],
-      });
-    }
-  }
-
-  const operator = String(data.data_end_condition_operator || '').trim();
-  if (!operator) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Cần chọn operator',
-      path: ['data_end_condition_operator'],
-    });
-  }
-
-  const conditionValue = String(data.data_end_condition_value ?? '').trim();
-  if (DATA_END_VALUE_REQUIRED_OPERATORS.has(operator) && !conditionValue) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Operator này yêu cầu nhập value',
-      path: ['data_end_condition_value'],
-    });
-  }
 });
 
 function buildDefaults(mode, initialValues) {
-  const dataEndConditionDefaults = parseDataEndConditionDefaults(initialValues?.data_end_condition);
+  const dataStartConditionDefaults = parseDataConditionDefaults(initialValues?.data_start_condition, 'data_start_condition');
+  const dataEndConditionDefaults = parseDataConditionDefaults(initialValues?.data_end_condition, 'data_end_condition');
 
   if (mode === 'edit' && initialValues) {
     return {
@@ -212,6 +163,7 @@ function buildDefaults(mode, initialValues) {
       header_row_index: initialValues.header_row_index ?? 0,
       data_start_row_index: initialValues.data_start_row_index ?? '',
       data_end_row_index: initialValues.data_end_row_index ?? '',
+      ...dataStartConditionDefaults,
       ...dataEndConditionDefaults,
     };
   }
@@ -220,6 +172,11 @@ function buildDefaults(mode, initialValues) {
     source_name: '',
     agency_id: '',
     dai_ly: '',
+    data_start_condition_field_type: 'column_name',
+    data_start_condition_column_name: '',
+    data_start_condition_column_index: '',
+    data_start_condition_operator: '',
+    data_start_condition_value: '',
     data_end_condition_field_type: 'column_name',
     data_end_condition_column_name: '',
     data_end_condition_column_index: '',
@@ -228,7 +185,21 @@ function buildDefaults(mode, initialValues) {
   };
 }
 
+function hasDataConditionValue(dataCondition) {
+  if (!dataCondition) return false;
+
+  const valuesToCheck = [
+    dataCondition.operator,
+    dataCondition.column_name,
+    dataCondition.column_index,
+    dataCondition.value,
+  ];
+
+  return valuesToCheck.some((item) => String(item ?? '').trim() !== '');
+}
+
 export default function SourceForm({
+  sheetUrl,
   spreadsheetId,
   selectedSheetName,
   selectedGid,
@@ -260,7 +231,15 @@ export default function SourceForm({
   } = useForm({
     resolver: zodResolver(sourceSchema),
     defaultValues: buildDefaults(mode, initialValues),
+    shouldFocusError: false,
   });
+
+  const [isDataStartConditionEnabled, setIsDataStartConditionEnabled] = useState(() =>
+    hasDataConditionValue(initialValues?.data_start_condition)
+  );
+  const [isDataEndConditionEnabled, setIsDataEndConditionEnabled] = useState(() =>
+    hasDataConditionValue(initialValues?.data_end_condition)
+  );
 
   useEffect(() => {
     if (mode === 'edit' && initialValues) {
@@ -268,15 +247,41 @@ export default function SourceForm({
     }
   }, [mode, initialValues, reset]);
 
+  useEffect(() => {
+    setIsDataStartConditionEnabled(hasDataConditionValue(initialValues?.data_start_condition));
+    setIsDataEndConditionEnabled(hasDataConditionValue(initialValues?.data_end_condition));
+  }, [initialValues]);
+
+  // Sync các giá trị từ Sheet Inspector vào form khi đang edit
+  useEffect(() => {
+    if (mode !== 'edit') return;
+
+    if (sheetUrl !== undefined) setValue('spreadsheet_url', sheetUrl ?? '');
+    if (spreadsheetId !== undefined) setValue('spreadsheet_id', spreadsheetId ?? '');
+    if (selectedSheetName !== undefined) setValue('sheet_name', selectedSheetName ?? '');
+    if (selectedGid !== undefined) setValue('gid', String(selectedGid ?? ''));
+    if (headerRowIndex !== undefined) setValue('header_row_index', headerRowIndex ?? 0);
+    if (dataStartRowIndex !== undefined) setValue('data_start_row_index', dataStartRowIndex ?? '');
+    if (dataEndRowIndex !== undefined) setValue('data_end_row_index', dataEndRowIndex ?? '');
+  }, [mode, sheetUrl, spreadsheetId, selectedSheetName, selectedGid, headerRowIndex, dataStartRowIndex, dataEndRowIndex, setValue]);
+
   const isEditMode = mode === 'edit';
   const hasNoAgencies = !loadingAgencies && agencies.length === 0;
+  const dataStartConditionFieldType = watch('data_start_condition_field_type') || 'column_name';
+  const dataStartConditionOperator = watch('data_start_condition_operator') || '';
+  const dataStartRowIndexInForm = watch('data_start_row_index');
+  const isDataStartConditionDisabled = isEditMode
+    ? String(dataStartRowIndexInForm ?? '').trim() !== ''
+    : String(dataStartRowIndex ?? '').trim() !== '';
+  const isDataStartValueRequired = DATA_VALUE_REQUIRED_OPERATORS.has(dataStartConditionOperator);
+
   const dataEndConditionFieldType = watch('data_end_condition_field_type') || 'column_name';
   const dataEndConditionOperator = watch('data_end_condition_operator') || '';
   const dataEndRowIndexInForm = watch('data_end_row_index');
   const isDataEndConditionDisabled = isEditMode
     ? String(dataEndRowIndexInForm ?? '').trim() !== ''
     : String(dataEndRowIndex ?? '').trim() !== '';
-  const isDataEndValueRequired = DATA_END_VALUE_REQUIRED_OPERATORS.has(dataEndConditionOperator);
+  const isDataEndValueRequired = DATA_VALUE_REQUIRED_OPERATORS.has(dataEndConditionOperator);
 
   function tryAutoFillFromAgency(agencyName) {
     if (isEditMode) return;
@@ -304,6 +309,16 @@ export default function SourceForm({
   const submitDisabled = disabled || (!isEditMode && (!spreadsheetId || !selectedSheetName));
 
   useEffect(() => {
+    if (!isDataStartConditionDisabled) return;
+
+    setValue('data_start_condition_field_type', 'column_name');
+    setValue('data_start_condition_column_name', '');
+    setValue('data_start_condition_column_index', '');
+    setValue('data_start_condition_operator', '');
+    setValue('data_start_condition_value', '');
+  }, [isDataStartConditionDisabled, setValue]);
+
+  useEffect(() => {
     if (!isDataEndConditionDisabled) return;
 
     setValue('data_end_condition_field_type', 'column_name');
@@ -313,14 +328,38 @@ export default function SourceForm({
     setValue('data_end_condition_value', '');
   }, [isDataEndConditionDisabled, setValue]);
 
+  useEffect(() => {
+    if (isDataStartConditionEnabled) return;
+
+    setValue('data_start_condition_field_type', 'column_name');
+    setValue('data_start_condition_column_name', '');
+    setValue('data_start_condition_column_index', '');
+    setValue('data_start_condition_operator', '');
+    setValue('data_start_condition_value', '');
+  }, [isDataStartConditionEnabled, setValue]);
+
+  useEffect(() => {
+    if (isDataEndConditionEnabled) return;
+
+    setValue('data_end_condition_field_type', 'column_name');
+    setValue('data_end_condition_column_name', '');
+    setValue('data_end_condition_column_index', '');
+    setValue('data_end_condition_operator', '');
+    setValue('data_end_condition_value', '');
+  }, [isDataEndConditionEnabled, setValue]);
+
   const handleFormSubmit = handleSubmit((values) => {
-    const dataEndCondition = buildDataEndConditionPayload(values, {
-      disabled: isDataEndConditionDisabled,
+    const dataStartCondition = buildDataConditionPayload(values, 'data_start_condition', {
+      disabled: isDataStartConditionDisabled || !isDataStartConditionEnabled,
+    });
+    const dataEndCondition = buildDataConditionPayload(values, 'data_end_condition', {
+      disabled: isDataEndConditionDisabled || !isDataEndConditionEnabled,
     });
 
     onSubmit({
       ...values,
-      data_end_condition: dataEndCondition,
+      data_start_condition: dataStartCondition ?? null,
+      data_end_condition: dataEndCondition ?? null,
     });
   });
 
@@ -423,8 +462,196 @@ export default function SourceForm({
               <Col xs={24}>
                 <Card
                   size="small"
+                  title="Điều kiện bắt đầu (tuỳ chọn)"
+                  extra={
+                    <Space>
+                      {isDataStartConditionDisabled ? (
+                        <Text type="secondary">Đang bị vô hiệu</Text>
+                      ) : null}
+                      <Button
+                        size="small"
+                        type={isDataStartConditionEnabled ? 'default' : 'primary'}
+                        disabled={disabled || isDataStartConditionDisabled}
+                        onClick={() => setIsDataStartConditionEnabled((prev) => !prev)}
+                      >
+                        {isDataStartConditionEnabled ? 'Bỏ chọn' : 'Chọn điều kiện'}
+                      </Button>
+                    </Space>
+                  }
+                >
+                  {isDataStartConditionDisabled ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message="Đang dùng data_start_row_index nên data_start_condition được tắt."
+                    />
+                  ) : null}
+
+                  {isDataStartConditionEnabled ? (
+                    <Row gutter={12}>
+                      <Col xs={24} sm={8}>
+                        <Form.Item
+                          label="Kiểu cột"
+                          validateStatus={errors.data_start_condition_field_type ? 'error' : ''}
+                          help={errors.data_start_condition_field_type?.message}
+                        >
+                          <Controller
+                            name="data_start_condition_field_type"
+                            control={control}
+                            render={({ field }) => (
+                              <Select
+                                {...field}
+                                value={field.value || 'column_name'}
+                                disabled={disabled || isDataStartConditionDisabled}
+                                options={[
+                                  { value: 'column_name', label: 'column_name' },
+                                  { value: 'column_index', label: 'column_index (0-based)' },
+                                ]}
+                                onChange={(value) => {
+                                  field.onChange(value);
+                                  setValue('data_start_condition_column_name', '');
+                                  setValue('data_start_condition_column_index', '');
+                                }}
+                              />
+                            )}
+                          />
+                        </Form.Item>
+                      </Col>
+
+                      <Col xs={24} sm={8}>
+                        {dataStartConditionFieldType === 'column_index' ? (
+                          <Form.Item
+                            label="column_index (0-based)"
+                            validateStatus={errors.data_start_condition_column_index ? 'error' : ''}
+                            help={errors.data_start_condition_column_index?.message}
+                          >
+                            <Controller
+                              name="data_start_condition_column_index"
+                              control={control}
+                              render={({ field }) => (
+                                <InputNumber
+                                  {...field}
+                                  value={field.value === '' ? null : field.value}
+                                  onChange={(value) => field.onChange(value ?? '')}
+                                  min={0}
+                                  precision={0}
+                                  style={{ width: '100%' }}
+                                  disabled={disabled || isDataStartConditionDisabled}
+                                />
+                              )}
+                            />
+                          </Form.Item>
+                        ) : (
+                          <Form.Item
+                            label="column_name"
+                            validateStatus={errors.data_start_condition_column_name ? 'error' : ''}
+                            help={errors.data_start_condition_column_name?.message}
+                          >
+                            <Controller
+                              name="data_start_condition_column_name"
+                              control={control}
+                              render={({ field }) => (
+                                <Select
+                                  value={field.value || undefined}
+                                  onChange={(value) => field.onChange(value ?? '')}
+                                  placeholder="Chọn header"
+                                  disabled={disabled || isDataStartConditionDisabled}
+                                  allowClear
+                                  showSearch
+                                  optionFilterProp="label"
+                                  options={headers.map((header) => ({
+                                    value: String(header),
+                                    label: String(header),
+                                  }))}
+                                />
+                              )}
+                            />
+                          </Form.Item>
+                        )}
+                      </Col>
+
+                      <Col xs={24} sm={8}>
+                        <Form.Item
+                          label="Toán tử"
+                          validateStatus={errors.data_start_condition_operator ? 'error' : ''}
+                          help={errors.data_start_condition_operator?.message}
+                        >
+                          <Controller
+                            name="data_start_condition_operator"
+                            control={control}
+                            render={({ field }) => (
+                              <Select
+                                {...field}
+                                value={field.value || undefined}
+                                placeholder="Chọn operator"
+                                disabled={disabled || isDataStartConditionDisabled}
+                                options={DATA_CONDITION_OPERATORS}
+                                onChange={(value) => {
+                                  field.onChange(value);
+                                  if (!DATA_VALUE_REQUIRED_OPERATORS.has(value)) {
+                                    setValue('data_start_condition_value', '');
+                                  }
+                                }}
+                                allowClear
+                              />
+                            )}
+                          />
+                        </Form.Item>
+                      </Col>
+
+                      <Col xs={24}>
+                        <Form.Item
+                          label={`value${isDataStartValueRequired ? ' *' : ''}`}
+                          validateStatus={errors.data_start_condition_value ? 'error' : ''}
+                          help={errors.data_start_condition_value?.message}
+                        >
+                          <Controller
+                            name="data_start_condition_value"
+                            control={control}
+                            render={({ field }) => (
+                              <Input
+                                {...field}
+                                value={field.value || ''}
+                                placeholder="Nhập giá trị so sánh"
+                                disabled={
+                                  disabled ||
+                                  isDataStartConditionDisabled ||
+                                  !isDataStartValueRequired
+                                }
+                              />
+                            )}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  ) : (
+                    <Text type="secondary">
+                      Nhấn “Chọn điều kiện” để cấu hình điều kiện bắt đầu đọc dữ liệu.
+                    </Text>
+                  )}
+                </Card>
+              </Col>
+
+              <Col xs={24}>
+                <Card
+                  size="small"
                   title="Điều kiện kết thúc (tuỳ chọn)"
-                  extra={isDataEndConditionDisabled ? <Text type="secondary">Đang bị vô hiệu</Text> : null}
+                  extra={
+                    <Space>
+                      {isDataEndConditionDisabled ? (
+                        <Text type="secondary">Đang bị vô hiệu</Text>
+                      ) : null}
+                      <Button
+                        size="small"
+                        type={isDataEndConditionEnabled ? 'default' : 'primary'}
+                        disabled={disabled || isDataEndConditionDisabled}
+                        onClick={() => setIsDataEndConditionEnabled((prev) => !prev)}
+                      >
+                        {isDataEndConditionEnabled ? 'Bỏ chọn' : 'Chọn điều kiện'}
+                      </Button>
+                    </Space>
+                  }
                 >
                   {isDataEndConditionDisabled ? (
                     <Alert
@@ -435,7 +662,8 @@ export default function SourceForm({
                     />
                   ) : null}
 
-                  <Row gutter={12}>
+                  {isDataEndConditionEnabled ? (
+                    <Row gutter={12}>
                     <Col xs={24} sm={8}>
                       <Form.Item
                         label="Kiểu cột"
@@ -532,10 +760,10 @@ export default function SourceForm({
                               value={field.value || undefined}
                               placeholder="Chọn operator"
                               disabled={disabled || isDataEndConditionDisabled}
-                              options={DATA_END_CONDITION_OPERATORS}
+                              options={DATA_CONDITION_OPERATORS}
                               onChange={(value) => {
                                 field.onChange(value);
-                                if (!DATA_END_VALUE_REQUIRED_OPERATORS.has(value)) {
+                                if (!DATA_VALUE_REQUIRED_OPERATORS.has(value)) {
                                   setValue('data_end_condition_value', '');
                                 }
                               }}
@@ -570,7 +798,12 @@ export default function SourceForm({
                         />
                       </Form.Item>
                     </Col>
-                  </Row>
+                    </Row>
+                  ) : (
+                    <Text type="secondary">
+                      Nhấn “Chọn điều kiện” để cấu hình điều kiện dừng đọc dữ liệu.
+                    </Text>
+                  )}
                 </Card>
               </Col>
             </Row>

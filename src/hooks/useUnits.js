@@ -217,7 +217,7 @@ export function useUnits() {
     setSchemaError('');
   }
 
-  async function setSchemaFieldsBySchemaId(schemaId, includeInactive = false) {
+  const setSchemaFieldsBySchemaId = useCallback(async (schemaId, includeInactive = false) => {
     if (!schemaId) {
       setSchemaFields([]);
       setSchemaError('');
@@ -245,7 +245,7 @@ export function useUnits() {
     } finally {
       setLoadingSchemaFields(false);
     }
-  }
+  }, [fetchSchemaFields]);
 
   async function openCreate() {
     resetErrors();

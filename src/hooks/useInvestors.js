@@ -30,21 +30,21 @@ function normalizeAgency(item) {
   };
 }
 
-function normalizeDataEndCondition(dataEndCondition) {
-  if (!dataEndCondition || typeof dataEndCondition !== 'object') {
+function normalizeDataCondition(dataCondition) {
+  if (!dataCondition || typeof dataCondition !== 'object') {
     return undefined;
   }
 
-  const operator = String(dataEndCondition.operator || '').trim();
+  const operator = String(dataCondition.operator || '').trim();
   if (!operator) return undefined;
 
-  const rawColumnIndex = dataEndCondition.column_index;
+  const rawColumnIndex = dataCondition.column_index;
   const hasColumnIndex =
     rawColumnIndex !== undefined &&
     rawColumnIndex !== null &&
     String(rawColumnIndex).trim() !== '';
-  const columnName = String(dataEndCondition.column_name || '').trim();
-  const conditionValue = String(dataEndCondition.value ?? '').trim();
+  const columnName = String(dataCondition.column_name || '').trim();
+  const conditionValue = String(dataCondition.value ?? '').trim();
 
   const payload = {
     operator,
@@ -79,6 +79,7 @@ function normalizeSource(item) {
     id: item.id,
     source_code: item.source_code ?? item.code ?? '',
     source_name: item.source_name ?? item.name ?? '',
+    schema_id: item.schema_id ?? item.schema?.id ?? '',
     project_id: item.project_id ?? item.project?.id ?? '',
     agency_id: item.agency_id ?? item.agency?.id ?? '',
     project_name: item.project_name ?? item.project?.project_name ?? item.project?.name ?? item.du_an ?? '',
@@ -92,7 +93,8 @@ function normalizeSource(item) {
     header_row_index: item.header_row_index ?? '',
     data_start_row_index: item.data_start_row_index ?? '',
     data_end_row_index: item.data_end_row_index ?? '',
-    data_end_condition: normalizeDataEndCondition(item.data_end_condition),
+    data_start_condition: normalizeDataCondition(item.data_start_condition),
+    data_end_condition: normalizeDataCondition(item.data_end_condition),
     is_active: item.is_active ?? true,
   };
 }
@@ -271,20 +273,22 @@ export function useInvestors() {
       const duAn = data.du_an?.trim();
       const daiLy = data.dai_ly?.trim();
 
-      if (!(projectId > 0 || duAn)) {
-        throw new Error('Cần chọn dự án hoặc nhập du_an');
-      }
-
       if (!(agencyId > 0 || daiLy)) {
         throw new Error('Cần chọn đại lý hoặc nhập dai_ly');
       }
 
       const dataEndRowIndex =
         data.data_end_row_index === '' ? undefined : Number(data.data_end_row_index);
+      const dataStartRowIndex =
+        data.data_start_row_index === '' ? undefined : Number(data.data_start_row_index);
+      const dataStartCondition =
+        dataStartRowIndex === undefined
+          ? normalizeDataCondition(data.data_start_condition) ?? null
+          : null;
       const dataEndCondition =
         dataEndRowIndex === undefined
-          ? normalizeDataEndCondition(data.data_end_condition)
-          : undefined;
+          ? normalizeDataCondition(data.data_end_condition) ?? null
+          : null;
 
       await sourceApi.update(id, {
         source_code: data.source_code?.trim(),
@@ -298,7 +302,8 @@ export function useInvestors() {
         sheet_name: data.sheet_name?.trim() || undefined,
         gid: data.gid?.toString().trim() || undefined,
         header_row_index: data.header_row_index === '' ? undefined : Number(data.header_row_index),
-        data_start_row_index: data.data_start_row_index === '' ? undefined : Number(data.data_start_row_index),
+        data_start_row_index: dataStartRowIndex,
+        data_start_condition: dataStartCondition,
         data_end_row_index: dataEndRowIndex,
         data_end_condition: dataEndCondition,
         is_active: data.is_active ?? true,
