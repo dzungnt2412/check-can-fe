@@ -1,6 +1,7 @@
 export const mockCreateSourcePayload = {
   source_code: 'SRC_GOOGLE_001',
   source_name: 'Nguon du lieu du an A',
+  project_ids: [2, 5, 8],
   project_id: 2,
   agency_id: 3,
   spreadsheet_id: '1aBcDeFgHiJkLmNoPqRsTuVwXyZ123456',

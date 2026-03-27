@@ -44,9 +44,19 @@ export default function SourceDetailScreen({ catalog, mapping }) {
         preserveSelectedSheet: true,
         spreadsheetId: sourceDetail.spreadsheet_id,
         url: sourceDetail.spreadsheet_url,
+        preferredSheetName: sourceDetail.sheet_name,
       });
     })();
-  }, [sourceDetail?.id]);
+  }, [
+    sourceDetail?.id,
+    sourceDetail?.spreadsheet_id,
+    sourceDetail?.spreadsheet_url,
+    sourceDetail?.sheet_name,
+    sourceDetail?.gid,
+    sourceDetail?.header_row_index,
+    sourceDetail?.data_start_row_index,
+    sourceDetail?.data_end_row_index,
+  ]);
 
   async function handleUpdateSource(values) {
     if (!sourceDetail?.id) return;
@@ -145,7 +155,12 @@ export default function SourceDetailScreen({ catalog, mapping }) {
             loadingPreview={mapping.loadingPreview}
             errorInspect={mapping.errorInspect}
             errorPreview={mapping.errorPreview}
-            onInspect={() => mapping.inspectSheet({ preserveSelectedSheet: true })}
+            onInspect={() =>
+              mapping.inspectSheet({
+                preserveSelectedSheet: true,
+                preferredSheetName: mapping.selectedSheetName,
+              })
+            }
             onPreview={mapping.previewSheet}
             onSetSheetUrl={mapping.setSheetUrl}
             onSetHeaderRowIndex={mapping.setHeaderRowIndex}
@@ -155,7 +170,12 @@ export default function SourceDetailScreen({ catalog, mapping }) {
             locked={!sourceDetailEditing}
           />
 
-          <SheetPreviewTable headers={mapping.headers} previewRows={mapping.previewRows} loading={mapping.loadingPreview} />
+          <SheetPreviewTable
+            headers={mapping.headers}
+            previewRows={mapping.previewRows}
+            previewFormats={mapping.previewFormats}
+            loading={mapping.loadingPreview}
+          />
 
           <SourceForm
             mode="edit"
@@ -167,6 +187,8 @@ export default function SourceDetailScreen({ catalog, mapping }) {
             headerRowIndex={mapping.headerRowIndex}
             dataStartRowIndex={mapping.dataStartRowIndex}
             dataEndRowIndex={mapping.dataEndRowIndex}
+            onSetDataStartRowIndex={mapping.setDataStartRowIndex}
+            onSetDataEndRowIndex={mapping.setDataEndRowIndex}
             headers={mapping.headers}
             loading={savingSource}
             allProjects={catalog.allProjects}

@@ -38,6 +38,8 @@ export default function UnitDetailCard({ detail, schemaFields, loading, error })
             <Descriptions.Item label="agency_id">{detail.agency_id || '-'}</Descriptions.Item>
             <Descriptions.Item label="schema_id">{detail.schema_id || '-'}</Descriptions.Item>
             <Descriptions.Item label="agency_name">{detail.agency_name || '-'}</Descriptions.Item>
+            <Descriptions.Item label="project_names">{(detail.project_names || []).join(', ') || '-'}</Descriptions.Item>
+            <Descriptions.Item label="project_ids">{(detail.project_ids || []).join(', ') || '-'}</Descriptions.Item>
             <Descriptions.Item label="created_at">{detail.created_at || '-'}</Descriptions.Item>
             <Descriptions.Item label="updated_at">{detail.updated_at || '-'}</Descriptions.Item>
           </Descriptions>

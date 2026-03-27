@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken, handleAuthExpired, isTokenExpired } from './auth/authStorage';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '',
@@ -7,6 +8,36 @@ const api = axios.create({
     Accept: 'application/json',
   },
 });
+
+api.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token && isTokenExpired(token)) {
+    handleAuthExpired('token_expired');
+    return Promise.reject(new axios.Cancel('Token đã hết hạn'));
+  }
+
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      handleAuthExpired('token_invalid_or_expired');
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export const authApi = {
+  login: (payload) => api.post('/api/auth/login', payload),
+};
 
 export const sourceApi = {
   inspectSheet: (payload) => api.post('/api/sources/inspect-sheet', payload),
@@ -67,11 +98,27 @@ export const fieldCatalogApi = {
 };
 
 export const unitApi = {
-  getAll: (params) => api.get('/api/units', { params }),
+  getAll: (params = {}) => {
+    const searchParams = new URLSearchParams();
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      searchParams.set(key, String(value));
+    });
+
+    const query = searchParams.toString();
+    const endpoint = query ? `/api/units?${query}` : '/api/units';
+    return api.get(endpoint);
+  },
   getDetail: (id) => api.get(`/api/units/${id}`),
   create: (payload) => api.post('/api/units', payload),
   update: (id, payload) => api.put(`/api/units/${id}`, payload),
   delete: (id) => api.delete(`/api/units/${id}`),
+};
+
+export const unitDisplayConfigApi = {
+  getByRole: (role) => api.get('/api/unit-display-configs', { params: { role } }),
+  updateByRole: (role, payload) => api.put(`/api/unit-display-configs/${role}`, payload),
 };
 
 export default api;

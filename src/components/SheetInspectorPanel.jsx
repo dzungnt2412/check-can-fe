@@ -202,7 +202,7 @@ export default function SheetInspectorPanel({
           <Button
             icon={<EyeOutlined />}
             loading={loadingPreview}
-            disabled={locked || !selectedSheetName}
+            disabled={!selectedSheetName}
             onClick={onPreview}
             style={{ marginBottom: 0 }}
           >

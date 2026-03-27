@@ -25,8 +25,41 @@ export default function SourceManager({
   onGoToConfig,
   onGoToDetail,
 }) {
+  const projectMap = new Map((allProjects || []).map((project) => [String(project.id), project.name]));
+
+  function resolveProjectList(source) {
+    if (Array.isArray(source.linked_projects) && source.linked_projects.length) {
+      return source.linked_projects
+        .map((project) => ({
+          id: project.id,
+          name: project.project_name || project.name || '',
+        }))
+        .filter((project) => project.name);
+    }
+
+    if (Array.isArray(source.project_ids) && source.project_ids.length) {
+      const names = source.project_ids
+        .map((projectId) => {
+          const normalizedId = String(projectId);
+          const resolvedName = projectMap.get(normalizedId);
+          return resolvedName
+            ? { id: projectId, name: resolvedName }
+            : { id: projectId, name: `#${normalizedId}` };
+        });
+
+      return names;
+    }
+
+    if (source.project_name || source.du_an) {
+      return [{ id: source.project_id || 'legacy', name: source.project_name || source.du_an }];
+    }
+
+    return [];
+  }
 
   const rows = sources.map((source) => {
+    const projectList = resolveProjectList(source);
+
     return {
       key: source.id,
       id: source.id,
@@ -34,8 +67,18 @@ export default function SourceManager({
       source_name: source.source_name || '-',
       project: (
         <Space direction="vertical" size={0}>
-          <span>{source.project_name || source.du_an || '-'}</span>
-          {source.du_an && source.project_name !== source.du_an ? (
+          {projectList.length ? (
+            <Space size={[4, 4]} wrap>
+              {projectList.map((project) => (
+                <Tag color="blue" key={`${source.id}_${project.id}_${project.name}`}>
+                  {project.name}
+                </Tag>
+              ))}
+            </Space>
+          ) : (
+            <span>-</span>
+          )}
+          {source.du_an ? (
             <Text type="secondary" style={{ fontSize: 12 }}>du_an: {source.du_an}</Text>
           ) : null}
         </Space>

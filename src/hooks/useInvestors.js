@@ -73,7 +73,65 @@ function normalizeDataCondition(dataCondition) {
   return payload;
 }
 
+function parseOptionalRowIndex(value) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    return undefined;
+  }
+
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function normalizeProjectIdList(item) {
+  const idsFromField = Array.isArray(item?.project_ids)
+    ? item.project_ids
+    : [];
+  const idsFromLinked = Array.isArray(item?.linked_projects)
+    ? item.linked_projects.map((project) => project?.id)
+    : [];
+  const fallbackId = item?.project_id ?? item?.project?.id;
+
+  const merged = [...idsFromField, ...idsFromLinked, fallbackId]
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+
+  return Array.from(new Set(merged));
+}
+
+function normalizeLinkedProjects(item) {
+  if (Array.isArray(item?.linked_projects) && item.linked_projects.length) {
+    return item.linked_projects
+      .map((project) => ({
+        id: Number(project?.id),
+        project_name: String(project?.project_name || project?.name || '').trim(),
+      }))
+      .filter((project) => Number.isInteger(project.id) && project.id > 0 && project.project_name);
+  }
+
+  const fallbackName =
+    item?.project_name ?? item?.project?.project_name ?? item?.project?.name ?? item?.du_an ?? '';
+  const fallbackId = Number(item?.project_id ?? item?.project?.id);
+
+  if (fallbackName && Number.isInteger(fallbackId) && fallbackId > 0) {
+    return [{ id: fallbackId, project_name: String(fallbackName) }];
+  }
+
+  return [];
+}
+
 function normalizeSource(item) {
+  const normalizedProjectIds = normalizeProjectIdList(item);
+  const normalizedLinkedProjects = normalizeLinkedProjects(item);
+
   return {
     ...item,
     id: item.id,
@@ -81,6 +139,8 @@ function normalizeSource(item) {
     source_name: item.source_name ?? item.name ?? '',
     schema_id: item.schema_id ?? item.schema?.id ?? '',
     project_id: item.project_id ?? item.project?.id ?? '',
+    project_ids: normalizedProjectIds,
+    linked_projects: normalizedLinkedProjects,
     agency_id: item.agency_id ?? item.agency?.id ?? '',
     project_name: item.project_name ?? item.project?.project_name ?? item.project?.name ?? item.du_an ?? '',
     agency_name: item.agency_name ?? item.agency?.agency_name ?? item.agency?.name ?? item.dai_ly ?? '',
@@ -99,7 +159,14 @@ function normalizeSource(item) {
   };
 }
 
-export function useInvestors() {
+export function useInvestors(options = {}) {
+  const {
+    canReadInvestors = true,
+    canReadProjects = true,
+    canReadAgencies = true,
+    canReadSources = true,
+  } = options;
+
   const [investors, setInvestors] = useState([]);
   const [allProjects, setAllProjects] = useState([]);
   const [agencies, setAgencies] = useState([]);
@@ -160,11 +227,43 @@ export function useInvestors() {
   }, []);
 
   useEffect(() => {
-    fetchInvestors();
-    fetchAllProjects();
-    fetchAgencies();
-    fetchSources();
-  }, [fetchInvestors, fetchAllProjects, fetchAgencies, fetchSources]);
+    if (canReadInvestors) {
+      fetchInvestors();
+    } else {
+      setInvestors([]);
+      setLoadingInvestors(false);
+    }
+
+    if (canReadProjects) {
+      fetchAllProjects();
+    } else {
+      setAllProjects([]);
+      setLoadingProjects(false);
+    }
+
+    if (canReadAgencies) {
+      fetchAgencies();
+    } else {
+      setAgencies([]);
+      setLoadingAgencies(false);
+    }
+
+    if (canReadSources) {
+      fetchSources();
+    } else {
+      setSources([]);
+      setLoadingSources(false);
+    }
+  }, [
+    canReadInvestors,
+    canReadProjects,
+    canReadAgencies,
+    canReadSources,
+    fetchInvestors,
+    fetchAllProjects,
+    fetchAgencies,
+    fetchSources,
+  ]);
 
   async function createInvestor(name) {
     try {
@@ -268,7 +367,12 @@ export function useInvestors() {
 
   async function updateSource(id, data) {
     try {
-      const projectId = Number(data.project_id);
+      const normalizedProjectIds = Array.isArray(data.project_ids)
+        ? data.project_ids
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0)
+        : [];
+      const projectId = normalizedProjectIds[0] || Number(data.project_id);
       const agencyId = Number(data.agency_id);
       const duAn = data.du_an?.trim();
       const daiLy = data.dai_ly?.trim();
@@ -277,10 +381,10 @@ export function useInvestors() {
         throw new Error('Cần chọn đại lý hoặc nhập dai_ly');
       }
 
-      const dataEndRowIndex =
-        data.data_end_row_index === '' ? undefined : Number(data.data_end_row_index);
-      const dataStartRowIndex =
-        data.data_start_row_index === '' ? undefined : Number(data.data_start_row_index);
+      const dataEndRowIndex = parseOptionalRowIndex(data.data_end_row_index);
+      const dataStartRowIndex = parseOptionalRowIndex(data.data_start_row_index);
+      const dataStartRowIndexPayload = dataStartRowIndex === undefined ? null : dataStartRowIndex;
+      const dataEndRowIndexPayload = dataEndRowIndex === undefined ? null : dataEndRowIndex;
       const dataStartCondition =
         dataStartRowIndex === undefined
           ? normalizeDataCondition(data.data_start_condition) ?? null
@@ -293,6 +397,7 @@ export function useInvestors() {
       await sourceApi.update(id, {
         source_code: data.source_code?.trim(),
         source_name: data.source_name?.trim(),
+        project_ids: normalizedProjectIds.length ? normalizedProjectIds : undefined,
         project_id: projectId > 0 ? projectId : undefined,
         agency_id: agencyId > 0 ? agencyId : undefined,
         du_an: duAn || undefined,
@@ -302,15 +407,16 @@ export function useInvestors() {
         sheet_name: data.sheet_name?.trim() || undefined,
         gid: data.gid?.toString().trim() || undefined,
         header_row_index: data.header_row_index === '' ? undefined : Number(data.header_row_index),
-        data_start_row_index: dataStartRowIndex,
+        data_start_row_index: dataStartRowIndexPayload,
         data_start_condition: dataStartCondition,
-        data_end_row_index: dataEndRowIndex,
+        data_end_row_index: dataEndRowIndexPayload,
         data_end_condition: dataEndCondition,
         is_active: data.is_active ?? true,
       });
 
       setSuccess('Cập nhật source thành công');
-      fetchSources();
+      await fetchSources();
+      return true;
     } catch (e) {
       setError(e?.response?.data?.message || e?.message || 'Cập nhật source thất bại');
       throw e;

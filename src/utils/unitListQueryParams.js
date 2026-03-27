@@ -8,6 +8,11 @@ function parsePositiveInteger(value, fallback) {
   return Math.floor(parsed);
 }
 
+function normalizeSortDirection(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'desc' ? 'desc' : (normalized === 'asc' ? 'asc' : '');
+}
+
 export function normalizeCatalogFilters(filters) {
   if (!Array.isArray(filters)) return [];
 
@@ -40,14 +45,20 @@ export function normalizeCatalogFilters(filters) {
 
 export function buildUnitListParams({ page, limit, filters }) {
   const catalogFilters = normalizeCatalogFilters(filters?.catalog_filters || []);
+  const sortFieldKey = String(filters?.sort_field_key || '').trim();
+  const sortDirection = normalizeSortDirection(filters?.sort_direction);
+  const maCan = String(filters?.ma_can || filters?.unit_code || '').trim();
 
   const raw = {
     page,
     limit,
-    unit_code: filters?.unit_code,
+    ma_can: maCan,
+    project_id: filters?.project_id,
     agency_id: filters?.agency_id,
     schema_id: filters?.schema_id,
     ...(catalogFilters.length ? { catalog_filters: JSON.stringify(catalogFilters) } : {}),
+    ...(sortFieldKey ? { sort_field_key: sortFieldKey } : {}),
+    ...(sortDirection ? { sort_direction: sortDirection } : {}),
   };
 
   return Object.entries(raw).reduce((acc, [key, value]) => {
@@ -98,14 +109,20 @@ function parseCatalogFiltersFromSearch(searchParams) {
 }
 
 export function parseUnitListSearchParams(searchParams) {
+  const sortDirection = normalizeSortDirection(searchParams.get('sort_direction'));
+  const maCan = String(searchParams.get('ma_can') || searchParams.get('unit_code') || '').trim();
+
   return {
     page: parsePositiveInteger(searchParams.get('page'), 1),
     limit: parsePositiveInteger(searchParams.get('limit'), 10),
     filters: {
-      unit_code: String(searchParams.get('unit_code') || ''),
+      ma_can: maCan,
+      project_id: String(searchParams.get('project_id') || ''),
       agency_id: String(searchParams.get('agency_id') || ''),
       schema_id: String(searchParams.get('schema_id') || ''),
       catalog_filters: parseCatalogFiltersFromSearch(searchParams),
+      sort_field_key: String(searchParams.get('sort_field_key') || '').trim(),
+      sort_direction: sortDirection,
     },
   };
 }

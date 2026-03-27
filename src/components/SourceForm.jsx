@@ -25,6 +25,19 @@ const optionalEnum = (values) =>
     z.enum(values).optional()
   );
 
+const optionalStringOrNumber = () =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    return value;
+  }, z.union([z.string(), z.number()]).optional());
+
+const optionalIdArray = () =>
+  z.preprocess((value) => {
+    if (!Array.isArray(value)) return [];
+    return value;
+  }, z.array(z.union([z.string(), z.number()])));
+
 function normalizeSlug(value) {
   return String(value || '')
     .trim()
@@ -109,25 +122,26 @@ function buildDataConditionPayload(values, prefix, { disabled = false } = {}) {
 const sourceSchema = z.object({
   source_code: z.string().optional(),
   source_name: z.string().min(1, 'Bắt buộc'),
-  project_id: z.union([z.string(), z.number()]).optional(),
-  agency_id: z.union([z.string(), z.number()]).optional(),
+  project_id: optionalStringOrNumber(),
+  project_ids: optionalIdArray(),
+  agency_id: optionalStringOrNumber(),
   du_an: z.string().optional(),
   dai_ly: z.string().optional(),
   spreadsheet_id: z.string().optional(),
   spreadsheet_url: z.string().optional(),
   sheet_name: z.string().optional(),
   gid: z.string().optional(),
-  header_row_index: z.union([z.string(), z.number()]).optional(),
-  data_start_row_index: z.union([z.string(), z.number()]).optional(),
-  data_end_row_index: z.union([z.string(), z.number()]).optional(),
+  header_row_index: optionalStringOrNumber(),
+  data_start_row_index: optionalStringOrNumber(),
+  data_end_row_index: optionalStringOrNumber(),
   data_start_condition_field_type: optionalEnum(['column_name', 'column_index']),
   data_start_condition_column_name: z.string().optional(),
-  data_start_condition_column_index: z.union([z.string(), z.number()]).optional(),
+  data_start_condition_column_index: optionalStringOrNumber(),
   data_start_condition_operator: optionalEnum(['eq', 'ne', 'contains', 'empty', 'not_empty']),
   data_start_condition_value: z.string().optional(),
   data_end_condition_field_type: optionalEnum(['column_name', 'column_index']),
   data_end_condition_column_name: z.string().optional(),
-  data_end_condition_column_index: z.union([z.string(), z.number()]).optional(),
+  data_end_condition_column_index: optionalStringOrNumber(),
   data_end_condition_operator: optionalEnum(['eq', 'ne', 'contains', 'empty', 'not_empty']),
   data_end_condition_value: z.string().optional(),
 }).superRefine((data, ctx) => {
@@ -153,6 +167,9 @@ function buildDefaults(mode, initialValues) {
       source_code: initialValues.source_code || '',
       source_name: initialValues.source_name || '',
       project_id: initialValues.project_id || '',
+      project_ids: Array.isArray(initialValues.project_ids)
+        ? initialValues.project_ids
+        : (initialValues.project_id ? [initialValues.project_id] : []),
       agency_id: initialValues.agency_id || '',
       du_an: initialValues.du_an || '',
       dai_ly: initialValues.dai_ly || '',
@@ -170,6 +187,7 @@ function buildDefaults(mode, initialValues) {
   return {
     source_code: '',
     source_name: '',
+    project_ids: [],
     agency_id: '',
     dai_ly: '',
     data_start_condition_field_type: 'column_name',
@@ -206,6 +224,8 @@ export default function SourceForm({
   headerRowIndex,
   dataStartRowIndex,
   dataEndRowIndex,
+  onSetDataStartRowIndex,
+  onSetDataEndRowIndex,
   headers = [],
   mode = 'create',
   initialValues = null,
@@ -416,6 +436,37 @@ export default function SourceForm({
                     )}
                   />
                 </Form.Item>
+              </Col>
+
+              <Col xs={24} sm={12}>
+                <Form.Item label="Dự án (chọn nhiều)">
+                  <Controller
+                    name="project_ids"
+                    control={control}
+                    render={({ field }) => (
+                      <Select
+                        mode="multiple"
+                        value={Array.isArray(field.value) ? field.value : []}
+                        onChange={(vals) => {
+                          const nextValues = Array.isArray(vals) ? vals : [];
+                          field.onChange(nextValues);
+                          setValue('project_id', nextValues[0] ?? '');
+                        }}
+                        loading={loadingProjects}
+                        disabled={loadingProjects || disabled}
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder="-- Chọn một hoặc nhiều dự án --"
+                        style={{ width: '100%' }}
+                        options={(allProjects || []).map((p) => ({ value: p.id, label: p.name }))}
+                      />
+                    )}
+                  />
+                </Form.Item>
+                <Text type="secondary" style={{ display: 'block', marginTop: -12, marginBottom: 8 }}>
+                  Nếu đã chọn dự án: sync sẽ gán các dự án này cho unit. Nếu để trống: sync sẽ tự map từ catalog Dự án (du_an) trong file.
+                </Text>
               </Col>
 
               <Col xs={24} sm={12}>
@@ -904,7 +955,20 @@ export default function SourceForm({
                   <Controller
                     name="data_start_row_index"
                     control={control}
-                    render={({ field }) => <InputNumber {...field} value={field.value ?? ''} min={0} style={{ width: '100%' }} />}
+                    render={({ field }) => (
+                      <InputNumber
+                        {...field}
+                        value={field.value ?? ''}
+                        min={0}
+                        style={{ width: '100%' }}
+                        onChange={(value) => {
+                          field.onChange(value);
+                          if (onSetDataStartRowIndex) {
+                            onSetDataStartRowIndex(value ?? '');
+                          }
+                        }}
+                      />
+                    )}
                   />
                 </Form.Item>
               </Col>
@@ -913,7 +977,20 @@ export default function SourceForm({
                   <Controller
                     name="data_end_row_index"
                     control={control}
-                    render={({ field }) => <InputNumber {...field} value={field.value ?? ''} min={0} style={{ width: '100%' }} />}
+                    render={({ field }) => (
+                      <InputNumber
+                        {...field}
+                        value={field.value ?? ''}
+                        min={0}
+                        style={{ width: '100%' }}
+                        onChange={(value) => {
+                          field.onChange(value);
+                          if (onSetDataEndRowIndex) {
+                            onSetDataEndRowIndex(value ?? '');
+                          }
+                        }}
+                      />
+                    )}
                   />
                 </Form.Item>
               </Col>
